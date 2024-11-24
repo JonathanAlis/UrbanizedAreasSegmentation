@@ -93,6 +93,9 @@ def filter_polygons_by_bounding_box(gdf, bbox_list):
     return filtered_gdf
 
 
+
+
+# TODO zip
 class RasterizeMasks:
     def __init__(self, urban_shp_path, bdc_grid_path, custom_crs_wkt, resolution=10):
         """
@@ -105,7 +108,12 @@ class RasterizeMasks:
             resolution (int, optional): Raster resolution in meters. Defaults to 10.
         """
         # Load the urban shapefile and convert it to the custom CRS
-        self.urban_shp = gpd.read_file(urban_shp_path)
+        # Construct the URL-like path to the shapefile within the ZIP
+        if urban_shp_path.endswith('.zip'):
+            zip_url = f"zip://{urban_shp_path}!{'AU_2022_AreasUrbanizadas2019_Brasil.shp'}"
+            self.urban_shp = gpd.read_file(zip_url)
+        else:
+            self.urban_shp = gpd.read_file(urban_shp_path)
         self.custom_crs = CRS.from_wkt(custom_crs_wkt)
         self.urban_shp = self.urban_shp.to_crs(self.custom_crs)
         
