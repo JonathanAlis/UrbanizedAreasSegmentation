@@ -1,0 +1,1 @@
+https://brazildatacube.dpi.inpe.br/bdc/geoserver/bdc_catalog/ows?service=WFS&request=GetFeature&outputFormat=shape-zip&typeName=bdc_catalog:BDC_SM_V2
