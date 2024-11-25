@@ -25,9 +25,7 @@ def get_items_by_tile(tile = '032027',
     return items
 
 
-
-
-def read_and_save_raster(uri, save_folder=None, compress='lzw'):
+def download_and_save_item(item, save_dir = 'data/raw', compress='lzw'):
     """Reads a raster from a URI and optionally saves it to a file.
 
     Args:
@@ -38,27 +36,40 @@ def read_and_save_raster(uri, save_folder=None, compress='lzw'):
     Returns:
         rasterio.Dataset: The raster data as a rasterio Dataset object.
     """
-    filename = os.path.basename(uri)
-    if not os.path.exists(save_folder):
-        os.makedirs(save_folder)        
-    save_path = os.path.join(save_folder, filename)
-    read_ok = False
-    if os.path.exists(save_path):
-        try:
-            with rasterio.open(save_path) as src:
+
+    info_dict = item.to_dict()
+    
+    full_save_dir = os.path.join(save_dir, info_dict['id'])
+    uri = item.assets
+
+    for k in item.assets.keys():
+        uri = item.assets[k].href
+        filename = os.path.basename(uri)
+        if not os.path.exists(full_save_dir):
+            os.makedirs(full_save_dir)        
+        save_path = os.path.join(full_save_dir, filename)
+        read_ok = False
+        if os.path.exists(save_path):
+            try:
+                with rasterio.open(save_path) as src:
+                    data = src.read()
+                    meta = src.meta
+                    read_ok = True  
+                    print(f'{save_path} already downloaded. Skipping.')                    
+            except:
+                print(f'Error reading {save_path}')
+        if not read_ok:
+            with rasterio.open(uri) as src:
+                print(f'Downloading {uri}...')
+                print(f'Saving to {save_path}.')
+                
                 data = src.read()
                 meta = src.meta
-                read_ok = True
-        except:
-            print('erro ao ler')
-    if not read_ok:
-        with rasterio.open(uri) as src:
-            data = src.read()
-            meta = src.meta
-            meta['compress'] = compress
-            with rasterio.open(save_path, 'w', **meta) as dst:
-                dst.write(data)
-                print(filename,'saved')
+                meta['compress'] = compress
+                with rasterio.open(save_path, 'w', **meta) as dst:
+                    dst.write(data)
+                    print(filename,'saved')
         
-    return data, meta
+ 
+
 
