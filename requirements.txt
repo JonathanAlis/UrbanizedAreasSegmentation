@@ -3,3 +3,4 @@ rasterio
 geopandas
 fiona
 matplotlib
+pystac_client

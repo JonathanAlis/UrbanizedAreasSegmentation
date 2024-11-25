@@ -97,14 +97,16 @@ def filter_polygons_by_bounding_box(gdf, bbox_list):
 
 # TODO zip
 class RasterizeMasks:
-    def __init__(self, urban_shp_path, bdc_grid_path, custom_crs_wkt, resolution=10):
+    def __init__(self, urban_shp_path, bdc_grid_path, 
+                 custom_crs_wkt = 'PROJCS["unknown",GEOGCS["unknown",DATUM["Unknown based on GRS80 ellipsoid",SPHEROID["GRS 1980",6378137,298.257222101,AUTHORITY["EPSG","7019"]]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["latitude_of_center",-12],PARAMETER["longitude_of_center",-54],PARAMETER["standard_parallel_1",-2],PARAMETER["standard_parallel_2",-22],PARAMETER["false_easting",5000000],PARAMETER["false_northing",10000000],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AXIS["Easting",EAST],AXIS["Northing",NORTH]]', 
+                 resolution=10):
         """
         Initializes the RasterizeMasks class with shapefiles and parameters.
         
         Args:
             urban_shp_path (str): Path to the urban shapefile.
             bdc_grid_path (str): Path to the BDC grid shapefile.
-            custom_crs_wkt (str): Custom CRS in WKT format.
+            custom_crs_wkt (str, optional): Custom CRS in WKT format.
             resolution (int, optional): Raster resolution in meters. Defaults to 10.
         """
         # Load the urban shapefile and convert it to the custom CRS
