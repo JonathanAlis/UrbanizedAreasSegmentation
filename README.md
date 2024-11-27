@@ -13,7 +13,7 @@ This project focuses on image segmentation using machine learning models. The pr
 ## Project Structure
 
 The project is organized as follows:
-
+```
 project_root/
 ├── src/
 │   ├── __init__.py
@@ -73,6 +73,8 @@ project_root/
 │   └── ...
 ├── requirements.txt
 └── README.md
+
+```
 ### Key Directories and Files
 
 - **src/**: Contains all source code organized into subpackages.

@@ -37,16 +37,24 @@ def download_and_save_item(item, save_dir = 'data/raw', compress='lzw'):
         rasterio.Dataset: The raster data as a rasterio Dataset object.
     """
 
-    info_dict = item.to_dict()
+    info_dict = item.to_dict() 
+    prefix = info_dict['id'] # 'S2-16D_V2_032027_20191219'
+    collection, version, tile, date = prefix.split('_')
+    print(f'collection: {collection}')
+    print(f'version: {version}')
+    print(f'tile: {tile}')
+    print(f'date: {date}')
     
-    full_save_dir = os.path.join(save_dir, info_dict['id'])
+    
+    full_save_dir = os.path.join(save_dir, collection+'_'+version+'_'+tile, date)
     uri = item.assets
 
     for k in item.assets.keys():
         uri = item.assets[k].href
         filename = os.path.basename(uri)
         if not os.path.exists(full_save_dir):
-            os.makedirs(full_save_dir)        
+            os.makedirs(full_save_dir)
+            print(f'creating dir {full_save_dir}')        
         save_path = os.path.join(full_save_dir, filename)
         read_ok = False
         if os.path.exists(save_path):
@@ -58,6 +66,9 @@ def download_and_save_item(item, save_dir = 'data/raw', compress='lzw'):
                     print(f'{save_path} already downloaded. Skipping.')                    
             except:
                 print(f'Error reading {save_path}')
+                if os.path.exists(save_path):
+                    os.remove(save_path)
+
         if not read_ok:
             with rasterio.open(uri) as src:
                 print(f'Downloading {uri}...')

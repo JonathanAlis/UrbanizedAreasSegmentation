@@ -4,3 +4,6 @@ geopandas
 fiona
 matplotlib
 pystac_client
+scipy
+torch
+torchvision
