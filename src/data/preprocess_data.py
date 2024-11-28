@@ -3,9 +3,11 @@ import torch
 from scipy.interpolate import griddata
 from scipy.ndimage import median_filter
 import random
-import 
+import rasterio
 from torch.utils.data import Dataset, DataLoader
+import torchvision.transforms as transforms
 
+import src.data.utils as utils
 
 def interpolate_nan(data, interpolation_method='linear', value_type='regular', fixed_value=0, filter_size=3):
     """
@@ -89,10 +91,49 @@ def preprocess_data(data, return_nans = False, return_torch=True):
 
 
 
+class MaskReader:
+    def __init__(self, mask_filename, num_classes = None):
+        self.mask_filename = mask_filename
+        self.mask_data = rasterio.open(self.mask_filename)
+        self.num_classes = num_classes
 
+    def read_window(self, x, y, subtile_x, subtile_y, patch_size):
+        window = rasterio.windows.Window(x+subtile_x ,y+subtile_y , patch_size, patch_size) #TODO mudar esse hardcoded
+        m = self.mask_data.read(window = window)
+        #print(unique_counts(m))
+        labels = torch.from_numpy(m)
+        
+        if self.num_classes is not None:
+            labels = torch.clamp(labels, min=0, max=self.num_classes-1)
+        return labels
+    def read_all(self,):
+        m = self.mask_data.read()
+        labels = torch.from_numpy(m)
+        if self.num_classes is not None:
+            labels = torch.clamp(labels, min=0, max=self.num_classes-1)
+        return labels
+    
+    def indices_to_one_hot(self, indices):
+        indices = indices.squeeze()
+        one_hot = np.zeros((indices.shape[0], indices.shape[1], self.num_classes))
+        for i in range(indices.shape[0]):
+            for j in range(indices.shape[1]):
+                one_hot[i, j, indices[i, j]] = 1
+        return one_hot
+    
+
+transf = {0 : None,
+           1 : transforms.RandomRotation(degrees=(90, 90)),
+           2 : transforms.RandomRotation(degrees=(180, 180)),
+           3 : transforms.RandomRotation(degrees=(270, 270)),
+           4 : transforms.RandomVerticalFlip(p=1.0),
+           5 : transforms.RandomHorizontalFlip(p=1.0),
+           6 : utils.DiagonalFlip1(),
+           7 : utils.DiagonalFlip2(),
+           }
 
 # Define custom dataset
-class ImageDataset(Dataset):
+class ImageSubtileDataset(Dataset):
     def __init__(self, files, mask_filename, mean = None, std = None, num_classes = 5, subtile_size = 10560/6, patch_size=(256, 256), stride=128, augment = False, augment_transform = None, return_imgidx = False):
         self.image_files = files
         self.opened_files = {fp:rasterio.open(fp) for fp in self.image_files}      
@@ -126,9 +167,9 @@ class ImageDataset(Dataset):
                     self.indices.append(idx_dict)
                     if augment:
                         augment_patch = False
-                        subtile_x, subtile_y = extract_integers(f)
+                        subtile_x, subtile_y = utils.extract_integers(f)
                         labels = self.mask_reader.read_window(x, y, subtile_x, subtile_y, self.patch_size[0])
-                        unique_dict = unique_counts(labels)
+                        unique_dict = utils.unique_counts(labels)
                         #print(unique_dict)
                         unique_values = unique_dict.keys()
                         self.indices[-1]['labels'] = unique_values
@@ -171,7 +212,7 @@ class ImageDataset(Dataset):
             area_threshold = 25
             print(len(self.image_files))
             for f in self.image_files:
-                subtile_x, subtile_y = extract_integers(f)
+                subtile_x, subtile_y = utils.extract_integers(f)
                 print(f)
                 mask = self.mask_reader.read_window(0, 0, subtile_x, subtile_y, patch_size = self.subtile_size[1])
         
