@@ -50,10 +50,12 @@ density_mapping = {
     9: 'Densa'
 }
 
+
 def get_density(mask): #based on the density_mapping
     lookup_table = np.array([0, 1, 2, 3, 2, 3, 2, 3, 2, 3]) #0->0, 1->1, 2->2, 3->3, 4->2, etc
     density = np.take(lookup_table, mask)
     return density
+
 
 type_mapping = {
     1: 'Loteamento vazio',
@@ -72,6 +74,11 @@ def get_type(mask): #based on the type_mapping
     type = np.take(lookup_table, mask)
     return type
 
+
+def get_binary(mask): #foreground and background
+    lookup_table = np.array([0, 1, 1, 1, 1, 1, 1, 1, 1, 1]) #0->0, 1->1, 2->1, etc
+    type = np.take(lookup_table, mask)
+    return type
 # Example Usage:
 # mapping = load_mapping("path/to/directory")
 def apply_mapping(gdf, mapping):

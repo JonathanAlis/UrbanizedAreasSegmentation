@@ -4,7 +4,7 @@ import sys
 sys.path.append(os.path.abspath('..'))
 from rasterio.coords import BoundingBox
 
-import src.data.preprocess_data as preprocess_data
+#import src.data.preprocess_data as preprocess_data
 
 import os
 import rasterio
@@ -159,7 +159,8 @@ def create_composition(in_folder,
             for ch in channels:
                 channel_i, meta = read_channel_by_dates(in_folder, tile, dates, ch, prefix, window)
                 SCL_composed_image = composition_SCL(scl_data, channel_i, option = option, scl_min=4, scl_max=6)
-                SCL_composed_image = preprocess_data.interpolate_nan(SCL_composed_image, interpolation_method= 'median', value_type = 'negative')
+                #SCL_composed_image = preprocess_data.interpolate_nan(SCL_composed_image, interpolation_method= 'median', value_type = 'negative')
+                SCL_composed_image = interpolate_nan(SCL_composed_image, interpolation_method= 'average', value_type = 'negative')
                 channel_images.append(SCL_composed_image)
                 #print(ch, channel_images[-1].shape, channel_images[-1].dtype)
                 #print(SCL_composed_image[:10,:10])
@@ -187,3 +188,70 @@ def create_composition(in_folder,
     #TODO: check nan, change bounds, 
 
      
+
+
+from scipy.interpolate import griddata
+from scipy.ndimage import median_filter
+def interpolate_nan(data, interpolation_method='linear', value_type='regular', fixed_value=0, filter_size=3):
+    """
+    Interpolates NaN values in a 2D NumPy array using the specified interpolation method and value type.
+
+    Parameters:
+    data (numpy.ndarray): The 2D array with NaN values to be interpolated.
+    interpolation_method (str): The method of interpolation. Options are:
+                                - 'linear': Linear interpolation.
+                                - 'cubic': Cubic interpolation.
+                                - 'median': Median filter interpolation.
+    value_type (str): The type of values to replace NaN values with. Options are:
+                      - 'regular': Replace NaN values with regular interpolated values.
+                      - 'negative': Replace NaN values with negative interpolated values.
+                      - 'fixed': Replace NaN values with a fixed value.
+    fixed_value (float): The fixed value to replace NaN values with if value_type is 'fixed'.
+    filter_size (int): The size of the median filter window if interpolation_method is 'median'.
+
+    Returns:
+    numpy.ndarray: The 2D array with NaN values replaced based on the specified method and value type.
+    """
+    # Create a mask for NaN values
+    nan_mask = np.isnan(data)
+
+    # If there are no NaN values, return the original array
+    if not np.any(nan_mask):
+        return data
+
+    # Get the indices of the NaN values
+    nan_indices = np.argwhere(nan_mask)
+
+    # Get the indices of the non-NaN values
+    non_nan_indices = np.argwhere(~nan_mask)
+
+    # Get the values of the non-NaN values
+    non_nan_values = data[~nan_mask]
+
+    # Create a copy of the original array to store the result
+    result = data.copy()
+
+    if interpolation_method == 'linear':
+        # Linear interpolation
+        interpolated_values = griddata(non_nan_indices, non_nan_values, nan_indices, method='linear')
+    elif interpolation_method == 'cubic':
+        # Cubic interpolation
+        interpolated_values = griddata(non_nan_indices, non_nan_values, nan_indices, method='cubic')
+    elif interpolation_method == 'median':
+        # Median filter interpolation
+        filtered_data = median_filter(data, size=filter_size)
+        interpolated_values = filtered_data[nan_mask]
+    else:
+        raise ValueError("Invalid interpolation method. Choose from 'linear', 'cubic', or 'median'.")
+
+    if value_type == 'regular':
+        result[nan_mask] = interpolated_values
+    elif value_type == 'negative':
+        result[nan_mask] = -interpolated_values
+    elif value_type == 'fixed':
+        result[nan_mask] = fixed_value
+    else:
+        raise ValueError("Invalid value type. Choose from 'regular', 'negative', or 'fixed'.")
+
+    return result
+

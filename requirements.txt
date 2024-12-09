@@ -5,5 +5,7 @@ fiona
 matplotlib
 pystac_client
 scipy
-torch
-torchvision
+scikit-learn
+pyyaml
+#torch
+#torchvision

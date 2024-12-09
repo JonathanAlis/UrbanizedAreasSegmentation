@@ -6,8 +6,13 @@ import random
 import rasterio
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
+import re
+import os
+import yaml
+import math
+from sklearn.model_selection import StratifiedShuffleSplit
 
-import src.data.utils as utils
+import src.data.mask_processing as mask_processing
 
 def interpolate_nan(data, interpolation_method='linear', value_type='regular', fixed_value=0, filter_size=3):
     """
@@ -92,26 +97,43 @@ def preprocess_data(data, return_nans = False, return_torch=True):
 
 
 class MaskReader:
-    def __init__(self, mask_filename, num_classes = None):
+    def __init__(self, mask_filename, classes_mode = 'type'):
+        '''
+        Classes modes: 
+        all: 0 to 9, considers all combinations of types and densities
+        type: all 5 types
+        densities: all 4 densities
+        binary: 0 or 1 
+        '''
         self.mask_filename = mask_filename
         self.mask_data = rasterio.open(self.mask_filename)
-        self.num_classes = num_classes
+        self.classes_mode = classes_mode
 
-    def read_window(self, x, y, subtile_x, subtile_y, patch_size):
+    def transform_to_class_mode(self, m):
+        if self.classes_mode.lower() == 'type':
+            m = mask_processing.get_type(m)
+        elif self.classes_mode.lower() == 'density':
+            m = mask_processing.get_density(m)
+        elif self.classes_mode.lower() == 'binary':
+            m = mask_processing.get_binary(m)
+        else:
+            pass# if type_density, or any other, do not change
+        return m  
+
+    def read_window(self, x, y, subtile_x, subtile_y, patch_size, return_torch = True):
         window = rasterio.windows.Window(x+subtile_x ,y+subtile_y , patch_size, patch_size) #TODO mudar esse hardcoded
         m = self.mask_data.read(window = window)
-        #print(unique_counts(m))
-        labels = torch.from_numpy(m)
-        
-        if self.num_classes is not None:
-            labels = torch.clamp(labels, min=0, max=self.num_classes-1)
-        return labels
-    def read_all(self,):
+        m = self.transform_to_class_mode(m)
+        if return_torch:
+            m = torch.from_numpy(m)
+        return m
+
+    def read_all(self,return_torch = True):
         m = self.mask_data.read()
-        labels = torch.from_numpy(m)
-        if self.num_classes is not None:
-            labels = torch.clamp(labels, min=0, max=self.num_classes-1)
-        return labels
+        m = self.transform_to_class_mode(m)
+        if return_torch:
+            m = torch.from_numpy(m)
+        return m
     
     def indices_to_one_hot(self, indices):
         indices = indices.squeeze()
@@ -122,14 +144,56 @@ class MaskReader:
         return one_hot
     
 
+
+
+def get_x_y(string):
+    # Use regular expressions to find the patterns 'x=integer' and 'y=integer' (ignoring decimal points and non-digit characters after the numbers)
+    x_match = re.search(r'x=(\d+)', string)
+    y_match = re.search(r'y=(\d+)', string)
+    
+    # Extract the numbers as integers, or return None if not found
+    x_value = int(x_match.group(1)) if x_match else None
+    y_value = int(y_match.group(1)) if y_match else None
+    
+    return x_value, y_value
+
+
+def get_tile(string, pattern = "S2-16D_V2_"):
+    # Use regular expressions to find the patterns for the tile (ignoring decimal points and non-digit characters after the numbers)
+    match = re.search(f'{pattern}(\d+)', string)
+    
+    tile = match.group(1) if match else None
+    
+    return tile
+
+
+
+def unique_counts(labels):
+    class_count_dict, counts = np.unique(labels, return_counts=True)
+    class_count_dict = {int(class_) : int(counter_) for class_, counter_ in zip(class_count_dict, counts)}
+    return class_count_dict 
+
+
+class DiagonalFlip1:
+    def __call__(self, tensor):
+        # Diagonal Flip 1: Transpose the tensor (flip along the top-left to bottom-right diagonal)
+        return tensor.permute(1, 0, *range(2, tensor.dim()))  # Swap the first two dimensions (C, H, W)
+
+class DiagonalFlip2:
+    def __call__(self, tensor):
+        # Diagonal Flip 2: Flip horizontally and then transpose
+        tensor = tensor.flip(2)  # Flip along the width (last dimension)
+        return tensor.permute(1, 0, *range(2, tensor.dim()))  # Then transpose
+    
+
 transf = {0 : None,
            1 : transforms.RandomRotation(degrees=(90, 90)),
            2 : transforms.RandomRotation(degrees=(180, 180)),
            3 : transforms.RandomRotation(degrees=(270, 270)),
            4 : transforms.RandomVerticalFlip(p=1.0),
            5 : transforms.RandomHorizontalFlip(p=1.0),
-           6 : utils.DiagonalFlip1(),
-           7 : utils.DiagonalFlip2(),
+           6 : DiagonalFlip1(),
+           7 : DiagonalFlip2(),
            }
 
 # Define custom dataset
@@ -330,3 +394,343 @@ class ImageSubtileDataset(Dataset):
         # Close all the files when the dataset object is destroyed
         for src in self.opened_files.values():
             src.close()
+
+# Define custom dataset
+class SubtileDataset(Dataset):
+    def __init__(self, files, num_subtiles, classes_mode = 'type', patch_size=(256, 256), stride=128, augment = False, augment_transform = None, return_imgidx = False, return_nans = False):
+        self.image_files = files
+        self.opened_files = {fp:rasterio.open(fp) for fp in self.image_files}      
+        self.patch_size = patch_size
+        self.stride = stride
+        self.num_subtiles = num_subtiles
+        self.working_dir = os.path.abspath('..')
+        self.classes_mode = classes_mode
+        self.return_nans = return_nans
+        #self.masks = self.get_masks()
+        self.mask_params = self.get_mask_params()
+
+        self.transform = augment_transform
+        self.return_imgidx = return_imgidx
+
+
+        with rasterio.open(files[0]) as im:
+            image = im.read()
+            self.subtile_size = image.shape
+
+        self.indices=[]
+        for f, mp in zip(self.image_files, self.mask_params):
+            for x in range(0, self.subtile_size[1], self.stride):
+                for y in range(0, self.subtile_size[2], self.stride):
+                    idx_dict = {'file':f, 
+                                'x':x, 
+                                'y':y, 
+                                'transform' : 0,
+                                'mask_params':mp,
+                                'augmented' : 0
+                                }                        
+                    self.indices.append(idx_dict)
+                    if augment:
+                        pass
+
+    def get_mask(self, file, x = 0, y = 0):    
+        
+        subtile_x, subtile_y = get_x_y(file)
+        tile = get_tile(file)
+        print(subtile_x, subtile_y)
+        mask_reader = MaskReader(os.path.join(self.working_dir,f"data/masks/mask_raster_{tile}.tif"),
+                                    classes_mode = self.classes_mode
+                                    )
+        subtile_size = 10560//self.num_subtiles
+        mask = mask_reader.read_window(x, y, subtile_x, subtile_y, patch_size = self.patch_size[0])
+        
+        return mask
+    
+    def get_mask_params(self):    
+        
+        mask_params = [] 
+        for file in self.image_files:
+            print(file)
+            subtile_x, subtile_y = get_x_y(file)
+            tile = get_tile(file)
+            mask_file = os.path.join(self.working_dir,f"data/masks/mask_raster_{tile}.tif")
+            subtile_size = 10560//self.num_subtiles
+            #mask_reader = MaskReader(os.path.join(self.working_dir,f"data/masks/mask_raster_{tile}.tif"),
+            #                            classes_mode = self.classes_mode
+            #                            )
+            #mask = mask_reader.read_window(0, 0, subtile_x, subtile_y, patch_size = subtile_size)
+            mask_params.append({'file' : mask_file,
+                                'subtile_x' : subtile_x,
+                                'subtile_y' : subtile_y,
+                                'subtile_size' : subtile_size,
+                                'classes_mode' : self.classes_mode})
+        return mask_params
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        f = self.indices[idx]['file']
+        subtile_x, subtile_y = get_x_y(f)  
+        x, y = self.indices[idx]['x'], self.indices[idx]['y']
+        if x < 0:
+            x = 0
+        if y < 0:
+            y = 0
+        if x > self.subtile_size[1] - self.patch_size[0]:
+            x = self.subtile_size[1] - self.patch_size[0]
+        if y > self.subtile_size[2] - self.patch_size[1]:
+            y = self.subtile_size[2] - self.patch_size[1]
+        
+        window = rasterio.windows.Window(x ,y , self.patch_size[0], self.patch_size[1])            
+        image = preprocess_data(self.opened_files[f].read(window = window), return_nans=self.return_nans, return_torch=True) #np.float32
+
+        mask_params = self.indices[idx]['mask_params']
+        mask_file = mask_params['file']
+        mask = self.get_mask(f, x = x, y = y)
+
+        if self.transform:
+            transf_idx = self.indices[idx]['transform']
+            image = self.transform[transf_idx](image)
+            mask = self.transform[transf_idx](mask)
+        #print(self.onehotmasks)
+        #print(labels.shape)
+        if not self.return_imgidx:
+            return image, mask
+        else:
+            return image, mask, x, y, f
+
+    def __del__(self):
+        # Close all the files when the dataset object is destroyed
+        for src in self.opened_files.values():
+            src.close()
+
+def calculate_class_frequencies(masks, stratify_by = 'type_density'):
+    labels = []
+    if stratify_by == 'type':
+        num_classes = 5
+    elif stratify_by == 'density':
+        num_classes = 4
+    elif stratify_by == 'binary':
+        num_classes = 2
+    elif stratify_by == 'type_density':
+        num_classes = 9
+    else:
+        num_classes = max([np.max(mask) for mask in masks])+1
+
+    for mask in masks:
+        label = np.bincount(mask.flatten(), minlength = num_classes)  # Ensure all classes are included
+        labels.append(label)
+    return np.array(labels)
+
+
+def save_yaml(train, val, test, save_to):
+
+    working_dir = os.path.abspath('..')
+    save_to = os.path.join(working_dir, 'config', save_to)
+
+    num_subtiles = get_num_subtiles(train+test+val)
+    tiles = []
+    for file in train+val+test:
+        tile = get_tile(file)
+        if tile not in tiles:
+            tiles.append(tile)
+    
+
+    yaml_dict = {'tiles': tiles,
+                 'num_subtiles': num_subtiles,
+                 'train_files': train,
+                 'val_files': val,
+                 'test_files': test
+                 }
+
+    with open(save_to, "w") as yaml_file:
+        yaml.dump(yaml_dict, yaml_file, default_flow_style=False)  # Pretty printed
+        print('saved', save_to)
+
+
+def load_yaml(file):
+    working_dir = os.path.abspath('..')
+    file = os.path.join(working_dir, 'config', file)
+
+    with open(file, "r") as yaml_file:
+        loaded_data = yaml.safe_load(yaml_file)
+        print(loaded_data)
+        return loaded_data
+
+def get_num_subtiles(filenames):
+    tile_size = 10560
+    subtile_starts = []
+    for file in filenames:
+        subtile_x, subtile_y = get_x_y(file)
+        if subtile_x > 0:
+            subtile_starts.append(subtile_x)
+        if subtile_y > 0:
+            subtile_starts.append(subtile_y)
+    subtile_starts = list(set(subtile_starts))
+
+    gcd_value = subtile_starts[0]
+    for num in subtile_starts[1:]:
+        gcd_value = math.gcd(gcd_value, num)
+
+    return tile_size // gcd_value
+
+def train_val_test_stratify(tiles, 
+                            num_subtiles,
+                            train_size = 0.7, 
+                            val_size = 0.15, 
+                            save_to = 'subtiles_filenames.yaml',
+                            stratify_by = 'type_density'):
+    
+    # divides into train, validation and test sets, in a stratified way.
+    '''
+    Stratify_by:
+    None: do not stratify
+    Type: 
+
+    '''
+    ### TODO: vizualizar a distribuicao de classes?
+    ### Comentar, colocar no relatorio.
+
+    working_dir = os.path.abspath('..')
+
+    if not isinstance(tiles, list):
+        tiles = [tiles]
+
+
+    all_files = []
+    for tile in tiles:
+        folder = os.path.join(working_dir,f"data/processed/S2-16D_V2_{tile}/{num_subtiles}x{num_subtiles}_subtiles")
+        
+        files = os.listdir(folder)
+        files = [os.path.join(folder, f) for f in files if f.endswith('.tif')]
+        all_files+=files
+
+        if len(files)!=num_subtiles*num_subtiles:
+            raise(f"Still missing {num_subtiles*num_subtiles - len(files)} image compositions. Run src.data.subtile_composition.create_composition() for the tile {tile} and {num_subtiles} subtiles. There is an example at prepare_images.ipynb")
+        
+
+
+    random.seed(42) #for reproducibility
+    random.shuffle(all_files)
+
+    train_total = int(train_size*len(all_files))
+    val_total = int(val_size*len(all_files))
+    test_total = len(all_files) - train_total - val_total
+
+    print(train_total, val_total, test_total)
+    
+    if stratify_by == '' or stratify_by is None:
+        train_set = all_files[:train_total]
+        val_set = all_files[train_total:train_total+val_total]
+        test_set = all_files[train_total+val_total:]
+
+        if save_to is not None:
+            save_yaml(train_set, val_set, test_set, save_to)
+
+        return train_set, val_set, test_set
+
+    # if stratify
+    masks = []
+
+    for file in all_files:
+        subtile_x, subtile_y = get_x_y(file)
+        tile = get_tile(file)
+        mask_reader = MaskReader(os.path.join(working_dir,f"data/masks/mask_raster_{tile}.tif"),
+                                    classes_mode = stratify_by
+                                    )
+        subtile_size = 10560//num_subtiles
+        mask = mask_reader.read_window(0, 0, subtile_x, subtile_y, patch_size = subtile_size)
+        masks.append(mask)
+
+    label_count = calculate_class_frequencies(masks, stratify_by = stratify_by)
+    print(label_count)
+    files_labels = []
+    for f, lc in zip(all_files, label_count):
+        files_labels.append({'file': f, 'label_count': lc})
+
+
+    sums = []
+    for i in range(label_count[0].shape[0]):
+        sum_nth_element = int(sum(item['label_count'][i] for item in files_labels))  #sum of pixels of nth class
+        sums.append(sum_nth_element)
+
+    remaining = files_labels
+    sorted_indices = sorted(range(len(sums)), key=lambda i: sums[i])
+    train_set = []
+    val_set = []
+    test_set = []
+
+    while len(remaining)>0:
+        for i in sorted_indices: # ordered by the sum of pixels the classes
+            remaining = sorted(remaining, key=lambda x: x['label_count'][i], reverse=True) #for the class i, sort by the largest pixel count (biggest area of ith class first) 
+            
+            #random add to train, val or test set.
+            def add_to_set(set_, total):
+                if len(set_) < total and len(remaining) > 0:
+                    file = remaining.pop(0)['file']
+                    set_.append(file)
+            
+            params = [(train_set, train_total), (val_set, val_total), (test_set, test_total)]
+            random.shuffle(params)  
+            for set_, total in params:
+                add_to_set(set_, total)
+
+    if save_to is not None:
+        save_yaml(train_set, val_set, test_set, save_to)
+    return train_set, val_set, test_set
+    
+def check_stratification(set_files, num_subtiles, stratify_by):
+    working_dir = os.path.abspath('..')
+    total_counts = {}
+    for file in set_files:      
+        subtile_x, subtile_y = get_x_y(file)
+        tile = get_tile(file)
+        mask_reader = MaskReader(os.path.join(working_dir,f"data/masks/mask_raster_{tile}.tif"),
+                                    classes_mode = stratify_by
+                                    )
+        subtile_size = 10560//num_subtiles
+        mask = mask_reader.read_window(0, 0, subtile_x, subtile_y, patch_size = subtile_size)
+        c, count = np.unique(mask, return_counts=True)
+        class_count_dict = {int(class_) : int(counter_) for class_, counter_ in zip(c, count)}
+        #print(class_count_dict, f)
+        for c in class_count_dict:
+            if c not in total_counts:
+                total_counts[c] = 0     
+            total_counts[c] += class_count_dict[c]
+
+    total = sum(total_counts.values())
+    for c in total_counts:
+        print(c, total_counts[c], total, end='; ')
+        total_counts[c] /= total
+        
+    print(total_counts)
+    return total_counts
+
+
+def extract_integers(string):
+    # Use regular expressions to find the patterns 'x=integer' and 'y=integer' (ignoring decimal points and non-digit characters after the numbers)
+    x_match = re.search(r'x=(\d+)', string)
+    y_match = re.search(r'y=(\d+)', string)
+    
+    # Extract the numbers as integers, or return None if not found
+    x_value = int(x_match.group(1)) if x_match else None
+    y_value = int(y_match.group(1)) if y_match else None
+    
+    return x_value, y_value
+
+def unique_counts(labels):
+    class_count_dict, counts = np.unique(labels, return_counts=True)
+    class_count_dict = {int(class_) : int(counter_) for class_, counter_ in zip(class_count_dict, counts)}
+    return class_count_dict 
+
+
+class DiagonalFlip1:
+    def __call__(self, tensor):
+        # Diagonal Flip 1: Transpose the tensor (flip along the top-left to bottom-right diagonal)
+        return tensor.permute(1, 0, *range(2, tensor.dim()))  # Swap the first two dimensions (C, H, W)
+
+class DiagonalFlip2:
+    def __call__(self, tensor):
+        # Diagonal Flip 2: Flip horizontally and then transpose
+        tensor = tensor.flip(2)  # Flip along the width (last dimension)
+        return tensor.permute(1, 0, *range(2, tensor.dim()))  # Then transpose
