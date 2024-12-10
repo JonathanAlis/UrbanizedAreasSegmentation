@@ -160,7 +160,7 @@ def create_composition(in_folder,
                 channel_i, meta = read_channel_by_dates(in_folder, tile, dates, ch, prefix, window)
                 SCL_composed_image = composition_SCL(scl_data, channel_i, option = option, scl_min=4, scl_max=6)
                 #SCL_composed_image = preprocess_data.interpolate_nan(SCL_composed_image, interpolation_method= 'median', value_type = 'negative')
-                SCL_composed_image = interpolate_nan(SCL_composed_image, interpolation_method= 'average', value_type = 'negative')
+                SCL_composed_image = interpolate_nan(SCL_composed_image, interpolation_method= 'median', value_type = 'negative')
                 channel_images.append(SCL_composed_image)
                 #print(ch, channel_images[-1].shape, channel_images[-1].dtype)
                 #print(SCL_composed_image[:10,:10])
