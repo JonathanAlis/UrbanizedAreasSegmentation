@@ -192,7 +192,7 @@ def create_composition(in_folder,
 
 from scipy.interpolate import griddata
 from scipy.ndimage import median_filter
-def interpolate_nan(data, interpolation_method='linear', value_type='regular', fixed_value=0, filter_size=3):
+def interpolate_nan(data, interpolation_method='linear', value_type='regular', fixed_value=-1):
     """
     Interpolates NaN values in a 2D NumPy array using the specified interpolation method and value type.
 
@@ -214,9 +214,9 @@ def interpolate_nan(data, interpolation_method='linear', value_type='regular', f
     """
     # Create a mask for NaN values
     nan_mask = np.isnan(data)
-
-    # If there are no NaN values, return the original array
-    if not np.any(nan_mask):
+    num_nans = data.size - np.sum(nan_mask)
+    if num_nans == 0 or not np.any(nan_mask):
+       # If there are no NaN values, return the original array
         return data
 
     # Get the indices of the NaN values
@@ -231,15 +231,22 @@ def interpolate_nan(data, interpolation_method='linear', value_type='regular', f
     # Create a copy of the original array to store the result
     result = data.copy()
 
-    if interpolation_method == 'linear':
+    # For linear or cubic interpolation, it needs at least 4 points:
+    # QhullError: QH6214 qhull input error: not enough points(2) to construct initial simplex (need 4)
+    x_coords = non_nan_indices[:, 0]
+    y_coords = non_nan_indices[:, 1]
+    do_median = num_nans < 4 or np.all(x_coords == x_coords[0]) or np.all(y_coords == y_coords[0]) or interpolation_method == 'median' 
+    np.all(x_coords == x_coords[0])  # Check if all x-coordinates are the same
+    
+    if interpolation_method == 'linear' and not do_median:
         # Linear interpolation
         interpolated_values = griddata(non_nan_indices, non_nan_values, nan_indices, method='linear')
-    elif interpolation_method == 'cubic':
+    elif interpolation_method == 'cubic' and not do_median:
         # Cubic interpolation
         interpolated_values = griddata(non_nan_indices, non_nan_values, nan_indices, method='cubic')
-    elif interpolation_method == 'median':
+    elif do_median:
         # Median filter interpolation
-        filtered_data = median_filter(data, size=filter_size)
+        filtered_data = median_filter(data, size=5)
         interpolated_values = filtered_data[nan_mask]
     else:
         raise ValueError("Invalid interpolation method. Choose from 'linear', 'cubic', or 'median'.")

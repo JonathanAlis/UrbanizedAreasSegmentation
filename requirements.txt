@@ -7,5 +7,5 @@ pystac_client
 scipy
 scikit-learn
 pyyaml
-#torch
-#torchvision
+torch
+torchvision

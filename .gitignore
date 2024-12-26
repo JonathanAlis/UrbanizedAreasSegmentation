@@ -1,9 +1,11 @@
 # Ignore all .zip files
 #*.zip
+*.pyc
 
 # Ignore all files in a specific folder
 data/raw
 data/processed
+.venv
 
 
 

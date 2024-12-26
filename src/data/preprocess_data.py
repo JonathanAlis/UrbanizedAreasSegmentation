@@ -85,10 +85,12 @@ def preprocess_data(data, return_nans = False, return_torch=True):
         data=data/10000.0
 
     else:
-        valid_mask = data < 0
-        data = np.zeros_like(data, dtype=np.float32)
-        data[valid_mask] = data[valid_mask] / 10000.0
-        data[~valid_mask] = np.nan 
+        
+        valid_mask = data >= 0
+        data_with_nan = np.zeros_like(data, dtype=np.float32)
+        data_with_nan[valid_mask] = data[valid_mask] / 10000.0
+        data_with_nan[~valid_mask] = np.nan
+        data = data_with_nan 
     if return_torch:
         return torch.tensor(data)
     return data
@@ -120,8 +122,8 @@ class MaskReader:
             pass# if type_density, or any other, do not change
         return m  
 
-    def read_window(self, x, y, subtile_x, subtile_y, patch_size, return_torch = True):
-        window = rasterio.windows.Window(x+subtile_x ,y+subtile_y , patch_size, patch_size) #TODO mudar esse hardcoded
+    def read_window(self, x, y, patch_size, return_torch = True):
+        window = rasterio.windows.Window(x, y, patch_size, patch_size) 
         m = self.mask_data.read(window = window)
         m = self.transform_to_class_mode(m)
         if return_torch:
@@ -232,7 +234,7 @@ class ImageSubtileDataset(Dataset):
                     if augment:
                         augment_patch = False
                         subtile_x, subtile_y = utils.extract_integers(f)
-                        labels = self.mask_reader.read_window(x, y, subtile_x, subtile_y, self.patch_size[0])
+                        labels = self.mask_reader.read_window(x+subtile_x, y+subtile_y, self.patch_size[0])
                         unique_dict = utils.unique_counts(labels)
                         #print(unique_dict)
                         unique_values = unique_dict.keys()
@@ -278,7 +280,7 @@ class ImageSubtileDataset(Dataset):
             for f in self.image_files:
                 subtile_x, subtile_y = utils.extract_integers(f)
                 print(f)
-                mask = self.mask_reader.read_window(0, 0, subtile_x, subtile_y, patch_size = self.subtile_size[1])
+                mask = self.mask_reader.read_window(subtile_x, subtile_y, patch_size = self.subtile_size[1])
         
                 oh_mask = self.mask_reader.indices_to_one_hot(mask.squeeze())
                 centroids_area = {}
@@ -373,7 +375,7 @@ class ImageSubtileDataset(Dataset):
         
         window = rasterio.windows.Window(x ,y , self.patch_size[0], self.patch_size[1])            
         image = preprocess_data(self.opened_files[f].read(window = window), mean=self.mean, std=self.std) #np.float32
-        labels = self.mask_reader.read_window(x, y, subtile_x, subtile_y, self.patch_size[0])
+        labels = self.mask_reader.read_window(x+subtile_x, y+subtile_y, self.patch_size[0])
 
         if self.transform:
             transf_idx = self.indices[idx]['transform']
@@ -397,7 +399,7 @@ class ImageSubtileDataset(Dataset):
 
 # Define custom dataset
 class SubtileDataset(Dataset):
-    def __init__(self, files, num_subtiles, classes_mode = 'type', patch_size=(256, 256), stride=128, augment = False, augment_transform = None, return_imgidx = False, return_nans = False):
+    def __init__(self, files, num_subtiles, classes_mode = 'type', patch_size=(256, 256), stride=128, augment = False, augment_transform = None, return_imgidx = False, return_nans = False, debug = True):
         self.image_files = files
         self.opened_files = {fp:rasterio.open(fp) for fp in self.image_files}      
         self.patch_size = patch_size
@@ -411,7 +413,7 @@ class SubtileDataset(Dataset):
 
         self.transform = augment_transform
         self.return_imgidx = return_imgidx
-
+        self.debug = debug
 
         with rasterio.open(files[0]) as im:
             image = im.read()
@@ -436,12 +438,12 @@ class SubtileDataset(Dataset):
         
         subtile_x, subtile_y = get_x_y(file)
         tile = get_tile(file)
-        print(subtile_x, subtile_y)
+        print('x, y: ', x, y, 'subtiles:', subtile_x, subtile_y)
         mask_reader = MaskReader(os.path.join(self.working_dir,f"data/masks/mask_raster_{tile}.tif"),
                                     classes_mode = self.classes_mode
                                     )
         subtile_size = 10560//self.num_subtiles
-        mask = mask_reader.read_window(x, y, subtile_x, subtile_y, patch_size = self.patch_size[0])
+        mask = mask_reader.read_window(x+subtile_x, y+subtile_y, patch_size = self.patch_size[0])
         
         return mask
     
@@ -469,6 +471,8 @@ class SubtileDataset(Dataset):
         return len(self.indices)
 
     def __getitem__(self, idx):
+
+            
         f = self.indices[idx]['file']
         subtile_x, subtile_y = get_x_y(f)  
         x, y = self.indices[idx]['x'], self.indices[idx]['y']
@@ -487,6 +491,14 @@ class SubtileDataset(Dataset):
         mask_params = self.indices[idx]['mask_params']
         mask_file = mask_params['file']
         mask = self.get_mask(f, x = x, y = y)
+        
+
+        if self.debug:
+            print('LOADING...')
+            print(idx)
+            print(f)
+            print(mask_params['file'])
+            print('x, y in subtile:',x, y)
 
         if self.transform:
             transf_idx = self.indices[idx]['transform']
@@ -527,6 +539,11 @@ def save_yaml(train, val, test, save_to):
 
     working_dir = os.path.abspath('..')
     save_to = os.path.join(working_dir, 'config', save_to)
+
+    directory = os.path.dirname(save_to)
+    if not os.path.exists(directory):
+        print(f'creating {directory}')
+        os.makedirs(directory)
 
     num_subtiles = get_num_subtiles(train+test+val)
     tiles = []
@@ -639,11 +656,11 @@ def train_val_test_stratify(tiles,
                                     classes_mode = stratify_by
                                     )
         subtile_size = 10560//num_subtiles
-        mask = mask_reader.read_window(0, 0, subtile_x, subtile_y, patch_size = subtile_size)
+        mask = mask_reader.read_window(subtile_x, subtile_y, patch_size = subtile_size)
         masks.append(mask)
 
     label_count = calculate_class_frequencies(masks, stratify_by = stratify_by)
-    print(label_count)
+
     files_labels = []
     for f, lc in zip(all_files, label_count):
         files_labels.append({'file': f, 'label_count': lc})
@@ -689,7 +706,7 @@ def check_stratification(set_files, num_subtiles, stratify_by):
                                     classes_mode = stratify_by
                                     )
         subtile_size = 10560//num_subtiles
-        mask = mask_reader.read_window(0, 0, subtile_x, subtile_y, patch_size = subtile_size)
+        mask = mask_reader.read_window(subtile_x, subtile_y, patch_size = subtile_size)
         c, count = np.unique(mask, return_counts=True)
         class_count_dict = {int(class_) : int(counter_) for class_, counter_ in zip(c, count)}
         #print(class_count_dict, f)
