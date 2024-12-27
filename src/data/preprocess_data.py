@@ -565,14 +565,21 @@ def save_yaml(train, val, test, save_to):
         print('saved', save_to)
 
 
-def load_yaml(file):
-    working_dir = os.path.abspath('..')
-    file = os.path.join(working_dir, 'config', file)
+def load_yaml(file):    
 
-    with open(file, "r") as yaml_file:
-        loaded_data = yaml.safe_load(yaml_file)
-        print(loaded_data)
-        return loaded_data
+    if not os.path.exists(file):
+        return None
+
+    try:
+        with open(file, "r") as yaml_file:
+            loaded_data = yaml.safe_load(yaml_file)
+            print('Loading: ',yaml_filename)
+
+            return loaded_data
+    except yaml.YAMLError as e:
+        print(f"Error parsing YAML file: {e}")
+        return None
+
 
 def get_num_subtiles(filenames):
     tile_size = 10560
@@ -591,11 +598,24 @@ def get_num_subtiles(filenames):
 
     return tile_size // gcd_value
 
+
+def yaml_filename(num_subtiles, tiles, stratified_by):
+    filename = 'train_val_test_split'
+    filename += f'-{num_subtiles}_subtiles-'
+    filename += '_'.join(tiles)
+    if stratified_by != '' and stratified_by is not None:
+        filename += f'-stratified_by_{stratified_by}'
+    filename += '.yaml'
+
+    working_dir = os.path.abspath('..')
+    filename = os.path.join(working_dir, 'config', filename)
+
+    return filename
+
 def train_val_test_stratify(tiles, 
                             num_subtiles,
                             train_size = 0.7, 
                             val_size = 0.15, 
-                            save_to = 'subtiles_filenames.yaml',
                             stratify_by = 'type_density'):
     
     # divides into train, validation and test sets, in a stratified way.
@@ -625,16 +645,28 @@ def train_val_test_stratify(tiles,
         if len(files)!=num_subtiles*num_subtiles:
             raise(f"Still missing {num_subtiles*num_subtiles - len(files)} image compositions. Run src.data.subtile_composition.create_composition() for the tile {tile} and {num_subtiles} subtiles. There is an example at prepare_images.ipynb")
         
+    ## Checking if already saved
 
+    save_to = yaml_filename(num_subtiles, tiles, stratify_by)
+    loaded_data = load_yaml(save_to)
+    if loaded_data is not None:
+        print('File already saved, loading it.')
+        train_set = loaded_data['train_files']
+        val_set = loaded_data['val_files']
+        test_set = loaded_data['test_files']
+        return train_set, val_set, test_set
 
     random.seed(42) #for reproducibility
     random.shuffle(all_files)
 
-    train_total = int(train_size*len(all_files))
-    val_total = int(val_size*len(all_files))
+    train_total = round(train_size*len(all_files))
+    val_total = round(val_size*len(all_files))
     test_total = len(all_files) - train_total - val_total
+    
+    print(f'Training set size:',train_total)
+    print(f'Validation set size:',val_total)
+    print(f'Test set size:',test_total)
 
-    print(train_total, val_total, test_total)
     
     if stratify_by == '' or stratify_by is None:
         train_set = all_files[:train_total]
