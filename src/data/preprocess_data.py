@@ -453,7 +453,7 @@ class SubtileDataset(Dataset):
         if self.data_augmentation:     
             print(f'Augmented {count_da} images, of {total}')
             
-    def get_mask(self, file, x = 0, y = 0):    
+    def get_mask(self, file, x = 0, y = 0, return_tensor = False):    
         
         subtile_x, subtile_y = get_x_y(file)
         tile = get_tile(file)
@@ -470,9 +470,9 @@ class SubtileDataset(Dataset):
             mask = mask_processing.get_density(mask)
         elif self.classes_mode == 'binary':
             mask = mask_processing.get_binary(mask)
-        #else: do nothing.        
-            
-
+        #else: do nothing. 
+        if return_tensor:
+            return torch.from_numpy(mask)
         return mask
     
     def check_augmentation(self, mask, threshold = 0.01):
@@ -546,7 +546,7 @@ class SubtileDataset(Dataset):
 
         mask_params = self.indices[idx]['mask_params']
         mask_file = mask_params['file']
-        mask = self.get_mask(f, x = x, y = y)
+        mask = self.get_mask(f, x = x, y = y, return_tensor = True)
         
 
         if self.debug:
@@ -558,8 +558,9 @@ class SubtileDataset(Dataset):
 
         # applying tranform
         transf_idx = self.indices[idx]['transform']
-        image = self.transforms[transf_idx](image)
-        mask = self.transforms[transf_idx](mask)
+        if transf_idx > 0:
+            image = self.transforms[transf_idx](image)
+            mask = self.transforms[transf_idx](mask)
         #print(self.onehotmasks)
         #print(labels.shape)
         if not self.return_imgidx:
