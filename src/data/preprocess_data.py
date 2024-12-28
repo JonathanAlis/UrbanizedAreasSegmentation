@@ -399,7 +399,7 @@ class ImageSubtileDataset(Dataset):
 
 # Define custom dataset
 class SubtileDataset(Dataset):
-    def __init__(self, files, num_subtiles, classes_mode = 'type', patch_size=(256, 256), stride=128, augment = False, augment_transform = None, return_imgidx = False, return_nans = False, debug = True):
+    def __init__(self, files, num_subtiles, classes_mode = 'type', patch_size=(256, 256), stride=128, data_augmentation = False, return_imgidx = False, return_nans = False, debug = True):
         self.image_files = files
         self.opened_files = {fp:rasterio.open(fp) for fp in self.image_files}      
         self.patch_size = patch_size
@@ -408,18 +408,23 @@ class SubtileDataset(Dataset):
         self.working_dir = os.path.abspath('..')
         self.classes_mode = classes_mode
         self.return_nans = return_nans
-        #self.masks = self.get_masks()
         self.mask_params = self.get_mask_params()
-
-        self.transform = augment_transform
+        self.data_augmentation = data_augmentation
         self.return_imgidx = return_imgidx
         self.debug = debug
+        self.transforms = transf #global
 
         with rasterio.open(files[0]) as im:
             image = im.read()
             self.subtile_size = image.shape
 
+
+        count_da = 0
+        total = 0
         self.indices=[]
+
+        if self.data_augmentation:     
+            print('Doing data augmentation...')
         for f, mp in zip(self.image_files, self.mask_params):
             for x in range(0, self.subtile_size[1], self.stride):
                 for y in range(0, self.subtile_size[2], self.stride):
@@ -431,27 +436,78 @@ class SubtileDataset(Dataset):
                                 'augmented' : 0
                                 }                        
                     self.indices.append(idx_dict)
-                    if augment:
-                        pass
-
+                    total+=1
+                    if self.data_augmentation:                        
+                        mask = self.get_mask(f, x, y)
+                        if self.check_augmentation(mask, threshold = 0.01):
+                            count_da+=1
+                            for t_idx in range(1,len(transf)):
+                                idx_dict = {'file':f, 
+                                    'x':x, 
+                                    'y':y, 
+                                    'transform' : t_idx,
+                                    'mask_params':mp,
+                                    'augmented' : 1
+                                    }
+                                self.indices.append(idx_dict)
+        if self.data_augmentation:     
+            print(f'Augmented {count_da} images, of {total}')
+            
     def get_mask(self, file, x = 0, y = 0):    
         
         subtile_x, subtile_y = get_x_y(file)
         tile = get_tile(file)
-        print('x, y: ', x, y, 'subtiles:', subtile_x, subtile_y)
+        #print('x, y: ', x, y, 'subtiles:', subtile_x, subtile_y)
         mask_reader = MaskReader(os.path.join(self.working_dir,f"data/masks/mask_raster_{tile}.tif"),
                                     classes_mode = self.classes_mode
                                     )
         subtile_size = 10560//self.num_subtiles
         mask = mask_reader.read_window(x+subtile_x, y+subtile_y, patch_size = self.patch_size[0])
         
+        if self.classes_mode == 'type':
+            mask = mask_processing.get_type(mask)
+        elif self.classes_mode == 'density':
+            mask = mask_processing.get_density(mask)
+        elif self.classes_mode == 'binary':
+            mask = mask_processing.get_binary(mask)
+        #else: do nothing.        
+            
+
         return mask
     
+    def check_augmentation(self, mask, threshold = 0.01):
+        if self.classes_mode == 'type':
+            ignore_values = (0, 5)
+        elif self.classes_mode == 'density':
+            ignore_values = (0, 4)
+        elif self.classes_mode == 'binary':
+            return False
+        else:
+            ignore_values = (0, 9)
+
+        minority_mask = mask[(mask != ignore_values[0]) & (mask != ignore_values[1])]
+        unique_values, counts = np.unique(minority_mask, return_counts=True)
+        unique_values = unique_values.tolist()
+        counts = counts.tolist()
+        if len(unique_values)>=2:
+            return False
+        if isinstance(mask, np.ndarray):
+            proportions = [c/mask.size for c in counts]
+        elif isinstance(mask, torch.Tensor):
+            proportions = [c/mask.numel() for c in counts]
+        if sum(proportions)>threshold:
+            #print('data augmentation')
+            #print(counts)
+            #print(proportions, unique_values)
+            #print('SUMMM:', sum(proportions))
+        
+
+            return True
+
     def get_mask_params(self):    
         
         mask_params = [] 
         for file in self.image_files:
-            print(file)
             subtile_x, subtile_y = get_x_y(file)
             tile = get_tile(file)
             mask_file = os.path.join(self.working_dir,f"data/masks/mask_raster_{tile}.tif")
@@ -500,10 +556,10 @@ class SubtileDataset(Dataset):
             print(mask_params['file'])
             print('x, y in subtile:',x, y)
 
-        if self.transform:
-            transf_idx = self.indices[idx]['transform']
-            image = self.transform[transf_idx](image)
-            mask = self.transform[transf_idx](mask)
+        # applying tranform
+        transf_idx = self.indices[idx]['transform']
+        image = self.transforms[transf_idx](image)
+        mask = self.transforms[transf_idx](mask)
         #print(self.onehotmasks)
         #print(labels.shape)
         if not self.return_imgidx:
