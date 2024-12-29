@@ -92,7 +92,7 @@ def preprocess_data(data, return_nans = False, return_torch=True):
         data_with_nan[~valid_mask] = np.nan
         data = data_with_nan 
     if return_torch:
-        return torch.tensor(data)
+        return torch.tensor(data, dtype=torch.float32)
     return data
 
 
@@ -188,14 +188,23 @@ class DiagonalFlip2:
         return tensor.permute(1, 0, *range(2, tensor.dim()))  # Then transpose
     
 
-transf = {0 : None,
+d4_transforms = {0 : None,
            1 : transforms.RandomRotation(degrees=(90, 90)),
            2 : transforms.RandomRotation(degrees=(180, 180)),
            3 : transforms.RandomRotation(degrees=(270, 270)),
-           4 : transforms.RandomVerticalFlip(p=1.0),
-           5 : transforms.RandomHorizontalFlip(p=1.0),
-           6 : DiagonalFlip1(),
-           7 : DiagonalFlip2(),
+           4 : transforms.RandomHorizontalFlip(p=1.0),
+           5 : transforms.Compose([                        # Horizontal flip + 90° rotation
+                                    transforms.RandomHorizontalFlip(p=1),
+                                    transforms.RandomRotation([90, 90]),
+                                ]),
+           6 : transforms.Compose([                        # Horizontal flip + 180° rotation
+                                    transforms.RandomHorizontalFlip(p=1),
+                                    transforms.RandomRotation([180, 180]),
+                                ]),
+           7 : transforms.Compose([                        # Horizontal flip + 270° rotation
+                                    transforms.RandomHorizontalFlip(p=1),
+                                    transforms.RandomRotation([270, 270]),
+                                ]),
            }
 
 # Define custom dataset
@@ -251,7 +260,7 @@ class ImageSubtileDataset(Dataset):
                             
                         #print(f'TOTAL classe {i}:{value_count/total_count}')
                         if augment_patch:
-                            for t_idx in range(1,len(transf)):
+                            for t_idx in range(1,len(d4_transforms)):
                                 idx_dict = {'file':f, 
                                     'x':x, 
                                     'y':y, 
@@ -298,13 +307,13 @@ class ImageSubtileDataset(Dataset):
                     counter = num_patches[label]
                     last_counter = 0
                     while counter < num_patches[self.num_classes-1]//2:
-                        for t_idx in range(len(transf)):
+                        for t_idx in range(len(d4_transforms)):
                             for cx, cy, a, f in sorted_area:
                                 if a > area_threshold:                                                           
                                     idx_dict = {'file':f, 
                                         'x':cx-patch_size[0]//2 + random.randint(-patch_size[0]//4, patch_size[0]//4), 
                                         'y':cy-patch_size[1]//2 + random.randint(-patch_size[0]//4, patch_size[0]//4), 
-                                        'transform' : random.randint(0,len(transf)),
+                                        'transform' : random.randint(0,len(d4_transforms)),
                                         'labels' : label,
                                         'augmented' : 2
                                         }
@@ -412,7 +421,7 @@ class SubtileDataset(Dataset):
         self.data_augmentation = data_augmentation
         self.return_imgidx = return_imgidx
         self.debug = debug
-        self.transforms = transf #global
+        self.transforms = d4_transforms #global
 
         with rasterio.open(files[0]) as im:
             image = im.read()
@@ -441,7 +450,7 @@ class SubtileDataset(Dataset):
                         mask = self.get_mask(f, x, y)
                         if self.check_augmentation(mask, threshold = 0.01):
                             count_da+=1
-                            for t_idx in range(1,len(transf)):
+                            for t_idx in range(1,len(d4_transforms)):
                                 idx_dict = {'file':f, 
                                     'x':x, 
                                     'y':y, 
@@ -500,9 +509,8 @@ class SubtileDataset(Dataset):
             #print(counts)
             #print(proportions, unique_values)
             #print('SUMMM:', sum(proportions))
-        
-
             return True
+        return False
 
     def get_mask_params(self):    
         
@@ -558,11 +566,11 @@ class SubtileDataset(Dataset):
 
         # applying tranform
         transf_idx = self.indices[idx]['transform']
+
         if transf_idx > 0:
             image = self.transforms[transf_idx](image)
             mask = self.transforms[transf_idx](mask)
-        #print(self.onehotmasks)
-        #print(labels.shape)
+            
         if not self.return_imgidx:
             return image, mask
         else:
