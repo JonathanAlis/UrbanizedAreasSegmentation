@@ -1,0 +1,7 @@
+Model,Epoch,Loss method,Train Loss,Val Loss,Val Accuracy,Val Micro F1,Val Macro F1,Val Weighted F1,Val C0,Val C1,Status,Model path
+HRNe,8,BCE-dice,0.374,0.383,94.02,94.02,48.46,91.13,96.92,0.00, current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/HRNet_w32-512-binary.pth
+HRNe,9,BCE-dice,0.372,0.382,94.03,94.03,48.50,91.13,96.92,0.09, last epoch. ending training. current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/HRNet_w32-512-binary.pth
+HRNe,1,BCE-dice,0.368,0.381,94.02,94.02,48.46,91.13,96.92,0.00, current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/HRNet_w48-512-binary.pth
+HRNe,2,BCE-dice,0.367,0.374,94.02,94.02,48.46,91.13,96.92,0.00, current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/HRNet_w48-512-binary.pth
+HRNe,3,BCE-dice,0.366,0.384,93.64,93.64,48.36,90.94,96.72,0.00,,/home/jonathan/UrbanizedAreasSegmentation/models/HRNet_w48-512-binary.pth
+HRNe,4,BCE-dice,0.366,0.375,94.02,94.02,48.46,91.13,96.92,0.00,,/home/jonathan/UrbanizedAreasSegmentation/models/HRNet_w48-512-binary.pth

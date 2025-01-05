@@ -23,89 +23,87 @@ def iterate_parameter_grid(param_grid):
         yield dict(zip(keys, params))
 
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-def masked_cross_entropy_loss(pred, target, mask, weights = None):
-    target = target.long()
-    #print(weights)
-    loss = F.cross_entropy(pred, target, reduction='none', weight=weights)  # Shape: (batch_size, height, width)
-    loss = loss * mask.float()  # Only keep valid pixels where mask == True
-    
-    return loss.sum() / mask.sum()
-    
+class CombinedLoss(nn.Module):
+    def __init__(self, alpha=0.5):
+        """
+        Initialize the combined loss function.
 
+        Parameters:
+        alpha (float): Weighting factor for combining Cross-Entropy and Dice Loss.
+                       alpha * CrossEntropyLoss + (1 - alpha) * DiceLoss
+        """
+        super(CombinedLoss, self).__init__()
+        self.alpha = alpha
 
-def masked_dice_loss(pred, target, mask, num_classes, class_weights = None, epsilon=1e-6):
-    #predit are the logits, not the probabilities
-    target = target.long()
-    #unique_values, counts = torch.unique(target, return_counts=True)
-    #print(unique_values, counts)
-    target_one_hot = F.one_hot(target, num_classes=num_classes).permute(0, 3, 1, 2).float()
-    pred_probs = torch.sigmoid(pred)  # pred are logits, then get the probabilities
-    pred_flat = pred_probs.view(pred.shape[0], pred.shape[1], -1)
-    target_flat = target_one_hot.view(target.shape[0], target_one_hot.shape[1], -1)
-    
-    # Flatten the mask and expand to match class dimension
-    mask_flat = mask.view(mask.shape[0], 1, -1)  # Shape: (batch_size, 1, height*width)
-    mask_flat = mask_flat.expand_as(pred_flat)    # Shape: (batch_size, num_classes, height*width)
-    
-    # Apply mask to both pred and target (only keep valid pixels)
-    pred_flat_masked = pred_flat * mask_flat
-    target_flat_masked = target_flat * mask_flat
-    
-    # Compute intersection and union
-    dice_loss = 0
-    for i in range(num_classes):
+    def forward(self, y_pred, y_true):
+        """
+        Compute the combined loss.
 
+        Parameters:
+        y_pred (torch.Tensor): Predicted logits, shape (N, C, ...).
+        y_true (torch.Tensor): Ground truth labels, shape (N, ...).
+
+        Returns:
+        torch.Tensor: The combined loss value.
+        """
+
+        # Ensure y_true is 3D (N, H, W)
+        if y_true.dim() == 4:  # If y_true is (N, 1, H, W)
+            y_true = y_true.squeeze(1)  # Remove the extra dimension
+        elif y_true.dim() != 3:  # If y_true is not 3D
+            raise RuntimeError(f"y_true must be 3D (N, H, W) or 4D (N, 1, H, W). Got shape: {y_true.shape}")
+        # Cross-Entropy Loss
+        ce_loss = F.cross_entropy(y_pred, y_true)
+
+        # Dice Loss
+        dice_loss = self.multiclass_dice_loss(y_pred, y_true)
+
+        # Combine the losses
+        combined_loss = self.alpha * ce_loss + (1 - self.alpha) * dice_loss
+
+        return combined_loss, ce_loss, dice_loss
+
+    def multiclass_dice_loss(self, y_pred, y_true):
+        """
+        Compute the multiclass Dice Loss.
+
+        Parameters:
+        y_pred (torch.Tensor): Predicted logits, shape (N, C, H, W).
+        y_true (torch.Tensor): Ground truth labels, shape (N, H, W) or (N, 1, H, W).
+
+        Returns:
+        torch.Tensor: The Dice Loss value.
+        """
         
-        input_i = pred_flat_masked[:, i]
-        target_i = target_flat_masked[:, i]
-        
-        intersection = (input_i * target_i).sum(dim=-1)        
-        total = input_i.sum(dim=-1) + target_i.sum(dim=-1)
-        # Dice coefficient for class i
-        dice_score = (2 * intersection + epsilon) / (total + epsilon)
-        # Apply the class weight (if provided)
-        if class_weights is not None:
-            weight = class_weights[i]
-            dice_loss += weight * (1 - dice_score)
-        else:
-            dice_loss += 1 - dice_score
-    dice_loss = dice_loss / num_classes
-    dice_loss = dice_loss.mean(dim=-1) #average by batches
 
-    return dice_loss  
+        # Ensure y_true contains valid class indices
+        if y_true.min() < 0 or y_true.max() >= y_pred.size(1):
+            raise RuntimeError(f"y_true contains invalid class indices. Expected values in [0, {y_pred.size(1) - 1}].")
+
+        # Convert y_true to one-hot encoding
+        num_classes = y_pred.size(1)
+        y_true_one_hot = F.one_hot(y_true, num_classes).permute(0, 3, 1, 2).float()  # Shape: (N, C, H, W)
+
+        # Apply softmax to y_pred to get probabilities
+        y_pred_softmax = F.softmax(y_pred, dim=1)
+
+        # Compute intersection and union
+        intersection = torch.sum(y_pred_softmax * y_true_one_hot, dim=(2, 3))  # Sum over spatial dimensions
+        union = torch.sum(y_pred_softmax + y_true_one_hot, dim=(2, 3))
+
+        # Compute Dice coefficient
+        dice = (2.0 * intersection + 1e-6) / (union + 1e-6)  # Add epsilon to avoid division by zero
+
+        # Compute Dice Loss
+        dice_loss = 1.0 - dice.mean()  # Average over classes and batch
+
+        return dice_loss
 
 
-
-def combined_loss(preds, targets, mask, num_classes, mode = '', label_counts = None):
-    # Compute Dice Loss
-    
-    if mode.lower().startswith('bce'):
-        alpha, beta = 0, 1
-    elif mode.lower().startswith('dice'):
-        alpha, beta = 1, 0
-    elif 'BCE'.lower() in mode.lower() and 'dice' in mode.lower():
-        alpha, beta = 0.5, 0.5
-    else:
-        print('Undefined loss, choosing BCE.')
-        alpha, beta = 0, 1        
-    #print(label_counts)
-    if label_counts is not None:
-        device = preds.device
-        class_weights = 1.0 / torch.tensor(list(label_counts.values())).float()
-        class_weights = class_weights / class_weights.sum()
-        class_weights = class_weights.to(device)
-    else: 
-        class_weights = None
-    dice_loss = masked_dice_loss(preds, targets, mask, num_classes, class_weights)  # Compute Dice loss per class
-    mean_dice_loss = dice_loss.mean()
-
-    cross_entropy_loss = masked_cross_entropy_loss(preds, targets, mask, class_weights)
-    
-
-    # Combine the losses
-    loss = alpha * mean_dice_loss + beta * cross_entropy_loss
-    return loss, cross_entropy_loss, mean_dice_loss
 
 
 
@@ -127,13 +125,18 @@ def run_epoch(mode, model, dataloader, loss_mode='BCE', num_classes = None, opti
             images=images.to(device)
             labels=labels.to(device)
             # Forward pass
-            print(type(images))
-            print(images.shape)
-            print(images.dtype)  # Should be torch.float32 or torch.float64
-            print(next(model.parameters()).dtype)  # Should match input_tensor.dtype
+            if 0:
+                print(type(images))
+                print(images.shape)
+                print(images.dtype)  # Should be torch.float32 or torch.float64
+                print(next(model.parameters()).dtype)  # Should match input_tensor.dtype
             logits = model(images)
+
+
             pred = torch.sigmoid(logits)
             metrics_tracker.track_preds(labels, pred)
+
+                    
             if show_batches>0:
                 try:
                     if all(labels[i].sum()>0 for i in range(labels.shape[0])):
@@ -145,11 +148,15 @@ def run_epoch(mode, model, dataloader, loss_mode='BCE', num_classes = None, opti
                 except Exception as error:
                     print('Error while showing sample images...')
                     print(error)
-            if mode == 'train' and label_counts is not None:
-                loss, CE, dice = combined_loss(logits, labels, nan_mask, num_classes, mode = loss_mode, label_counts = label_counts)
-            else:
-                loss, CE, dice = combined_loss(logits, labels, nan_mask, num_classes, mode = loss_mode)
-            
+
+            if loss_mode == 'BCE':
+                alpha = 1
+            if loss_mode == 'BCE-dice':
+                alpha = 0.5
+            if loss_mode == 'dice':
+                alpha = 0
+            criterion = CombinedLoss(alpha=alpha)
+            loss, CE, dice = criterion(logits, labels)
             if mode == 'train':
                 # Backward pass and optimize, if training
                 optimizer.zero_grad()
@@ -286,7 +293,8 @@ def train_model(model, train_loader, val_loader, epochs, loss_mode, optimizer, d
             
         val_micro = val_report.at['micro avg','f1-score']
         
-        validation_per_class_list = [f"{100*val_f1[0]:.2f}" for i in range(num_classes)]
+        validation_per_class_list = [f"{100*val_f1[i]:.2f}" for i in range(num_classes)]
+        
         save_results(file_path=f"results_{model_name}.csv", 
                      model_name = model_name, 
                      epoch=epoch, 
@@ -354,16 +362,13 @@ class Metrics:
         self.TN = torch.zeros(num_classes)
         self.support = torch.zeros(num_classes)
         
-    def track_preds(self, truths, preds, nan_mask = None):
-        pred = preds>0.5
+    def track_preds(self, truths, preds):
+        #pred = preds>0.5
         preds = torch.argmax(preds, dim=1)
-        nan_mask = nan_mask.squeeze()
         for class_idx in range(self.num_classes):
             for i in range(preds.shape[0]):
-                #print('NAN MASK SUM:',nan_mask[i].sum(), 256*256-(nan_mask[i].sum()))
-
-                pred_ = preds[i][nan_mask[i]]
-                truths_ = truths[i][nan_mask[i]]
+                pred_ = preds[i]
+                truths_ = truths[i]
                 self.TP[class_idx] += ((pred_ == class_idx) & (truths_ == class_idx)).sum().item()
                 self.FP[class_idx] += ((pred_ == class_idx) & (truths_ != class_idx)).sum().item()
                 self.FN[class_idx] += ((pred_ != class_idx) & (truths_ == class_idx)).sum().item()

@@ -1,10 +1,12 @@
 
 import os
 import sys
+
+import rasterio.windows
 sys.path.append(os.path.abspath('..'))
 from rasterio.coords import BoundingBox
 
-#import src.data.preprocess_data as preprocess_data
+import src.data.preprocess_data as preprocess_data
 
 import os
 import rasterio
@@ -40,7 +42,7 @@ def find_channel(string):
 
 
 
-def display_images(images, limit=-1):
+def display_images(images: np.ndarray, limit: int =-1):
     fig, axes = plt.subplots(3, 4, figsize=(12, 9))
 
     for i, ax in enumerate(axes.flat):
@@ -51,7 +53,7 @@ def display_images(images, limit=-1):
     plt.tight_layout()
     plt.show()
 
-def read_channel_by_dates(in_folder, tile, dates, channel, prefix, window):
+def read_channel_by_dates(in_folder:str, tile:str, dates:list, channel:str, prefix:str, window:rasterio.windows.Window):
     all_data = []
     for date in dates:
         path = os.path.join(in_folder, date, f'{prefix}_{tile}_{date}_{channel}.tif')
@@ -63,7 +65,7 @@ def read_channel_by_dates(in_folder, tile, dates, channel, prefix, window):
 
 
 
-def composition_SCL(SCL, data, option, scl_min, scl_max):
+def composition_SCL(SCL:np.ndarray, data:np.ndarray, option:str, scl_min:int, scl_max:int):
     """
     Process data based on SCL values within a given range and return either average or median.
     
@@ -110,7 +112,8 @@ def create_composition(in_folder,
                        num_subtiles = 4, 
                        prefix = 'S2-16D_V2',
                        option = 'Average',
-                       rewrite = False
+                       rewrite = False,
+                       display = 3
                        ):
     in_folder = os.path.join(in_folder, f'{prefix}_{tile}')
     dates = os.listdir(in_folder)
@@ -159,8 +162,9 @@ def create_composition(in_folder,
             for ch in channels:
                 channel_i, meta = read_channel_by_dates(in_folder, tile, dates, ch, prefix, window)
                 SCL_composed_image = composition_SCL(scl_data, channel_i, option = option, scl_min=4, scl_max=6)
+                SCL_composed_image =  preprocess_data.fill_nans_nearest(SCL_composed_image, negate_filled = True)
                 #SCL_composed_image = preprocess_data.interpolate_nan(SCL_composed_image, interpolation_method= 'median', value_type = 'negative')
-                SCL_composed_image = interpolate_nan(SCL_composed_image, interpolation_method= 'median', value_type = 'negative')
+                #SCL_composed_image = interpolate_nan(SCL_composed_image, interpolation_method= 'median', value_type = 'negative')
                 channel_images.append(SCL_composed_image)
                 #print(ch, channel_images[-1].shape, channel_images[-1].dtype)
                 #print(SCL_composed_image[:10,:10])
@@ -180,7 +184,9 @@ def create_composition(in_folder,
             with rasterio.open(save_path, 'w', **meta) as dst:
                 dst.write(channel_composition)
                 print(save_path,'saved')
-            display_images(np.abs(channel_composition))
+            if display>0:
+                display_images(np.abs(channel_composition))
+                display -= 1
             print(f'subtile {i}, {j}')
             print(channel_composition.shape)
 
