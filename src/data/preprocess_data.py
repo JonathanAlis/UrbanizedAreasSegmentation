@@ -43,108 +43,33 @@ def fill_nans_nearest(arr: np.ndarray, negate_filled: bool = False):
 
     # Multiply only the filled values by -1 if `negate_filled` is True
     if negate_filled:
+
         filled_arr[mask] *= -1
 
     return filled_arr
 
 
 
-def interpolate_nan(data: np.array, interpolation_method: str = 'linear', value_type: str = 'regular', fixed_value: float = 0, filter_size: int = 3):
-    """
-    Interpolates NaN values in a 2D NumPy array using the specified interpolation method and value type.
-
-    Parameters:
-    data (numpy.ndarray): The 2D array with NaN values to be interpolated.
-    interpolation_method (str): The method of interpolation. Options are:
-                                - 'linear': Linear interpolation.
-                                - 'cubic': Cubic interpolation.
-                                - 'median': Median filter interpolation.
-    value_type (str): The type of values to replace NaN values with. Options are:
-                      - 'regular': Replace NaN values with regular interpolated values.
-                      - 'negative': Replace NaN values with negative interpolated values.
-                      - 'fixed': Replace NaN values with a fixed value.
-    fixed_value (float): The fixed value to replace NaN values with if value_type is 'fixed'.
-    filter_size (int): The size of the median filter window if interpolation_method is 'median'.
-
-    Returns:
-    numpy.ndarray: The 2D array with NaN values replaced based on the specified method and value type.
-    """
-    # Create a mask for NaN values
-    nan_mask = np.isnan(data)
-
-    # If there are no NaN values, return the original array
-    if not np.any(nan_mask):
-        return data
-
-    # Get the indices of the NaN values
-    nan_indices = np.argwhere(nan_mask)
-
-    # Get the indices of the non-NaN values
-    non_nan_indices = np.argwhere(~nan_mask)
-
-    # Get the values of the non-NaN values
-    non_nan_values = data[~nan_mask]
-
-    # Create a copy of the original array to store the result
-    result = data.copy()
-
-    if interpolation_method == 'linear':
-        # Linear interpolation
-        interpolated_values = method_convolution(data)
-        #interpolated_values = griddata(non_nan_indices, non_nan_values, nan_indices, method='linear')
-    elif interpolation_method == 'cubic':
-        # Cubic interpolation
-        interpolated_values = griddata(non_nan_indices, non_nan_values, nan_indices, method='cubic')
-    elif interpolation_method == 'median':
-        # Median filter interpolation
-        filtered_data = median_filter(data, size=filter_size)
-        interpolated_values = filtered_data[nan_mask]
-    elif interpolation_method == 'nearest':
-        print(data.shape)
-        interpolated_values = fill_nans_nearest(data)
-        print(interpolated_values.shape)
-    else:
-        raise ValueError("Invalid interpolation method. Choose from 'linear', 'cubic', or 'median'.")
-
-    if value_type == 'regular':
-        result[nan_mask] = interpolated_values
-    elif value_type == 'negative':
-        result[nan_mask] = -interpolated_values
-    elif value_type == 'fixed':
-        result[nan_mask] = fixed_value
-    else:
-        raise ValueError("Invalid value type. Choose from 'regular', 'negative', or 'fixed'.")
-
-    return result
-
-
 
 def preprocess_data(data: np.ndarray, treat_nans: bool | str = False, return_torch: bool = True):
+    # data is int16, where negative values represent invalid 
     # treat_nans: can be 
     # if false, returns data with nans.
     # in true, just abs them
     # if a string, use as interpolation method
     
-    if treat_nans == True:
+    data = (data.astype(np.float32))/10000.0
+
+    if treat_nans == True: # not a string
         data=np.abs(data)
-        data=data/10000.0
-    
     else:
-        print('debugging')
-        print(treat_nans)
         valid_mask = data >= 0
-        data = data.astype(np.float32) / 10000.0
         data[~valid_mask] = np.nan
-        data = fill_nans_nearest(data)
-        #data = interpolate_nan(data, interpolation_method=treat_nans, value_type='regular', fixed_value=0, filter_size=3)
-        
-        if 0:
-            data_with_nan = np.zeros_like(data, dtype=np.float32)
-            data_with_nan[valid_mask] = data[valid_mask] / 10000.0
-            data_with_nan[~valid_mask] = np.nan
-            data = data_with_nan 
-            data = interpolate_nan(data, interpolation_method=treat_nans, value_type='regular', fixed_value=0, filter_size=3)
-        
+    
+        if treat_nans == 'nearest':
+            data = fill_nans_nearest(data, negate_filled=False)
+        elif treat_nans == 'linear':
+            raise('linear interpolation nan fill not implemented')
     if return_torch:
         return torch.tensor(data, dtype=torch.float32)
     return data
