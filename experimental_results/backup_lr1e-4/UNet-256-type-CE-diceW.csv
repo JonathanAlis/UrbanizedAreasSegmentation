@@ -1,0 +1,7 @@
+Model,Epoch,Loss method,Weighted loss,Learning rate,Batch size,Train Loss,Val Loss,Val Accuracy,Val Micro F1,Val Macro F1,Val Weighted F1,Val C0,Val C1,Val C2,Val C3,Val C4,Status,Model path
+UNet-256-type-CE-diceW,0,CE-dice,True,0.0001,20,0.613,0.954,96.72,91.80,45.69,93.65,96.90,16.96,8.53,22.49,83.54, current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/UNet-256-type-CE-diceW.pth
+UNet-256-type-CE-diceW,1,CE-dice,True,0.0001,20,0.438,0.947,92.24,80.61,44.59,86.61,87.58,3.18,12.84,32.93,86.41, current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/UNet-256-type-CE-diceW.pth
+UNet-256-type-CE-diceW,2,CE-dice,True,0.0001,20,0.407,0.895,96.91,92.28,44.25,94.10,96.25,13.85,14.04,7.79,89.31, current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/UNet-256-type-CE-diceW.pth
+UNet-256-type-CE-diceW,3,CE-dice,True,0.0001,20,0.374,1.179,86.93,67.32,37.53,76.94,76.24,2.01,13.37,11.76,84.26,,/home/jonathan/UrbanizedAreasSegmentation/models/UNet-256-type-CE-diceW.pth
+UNet-256-type-CE-diceW,4,CE-dice,True,0.0001,20,0.352,1.172,98.05,95.13,45.95,95.35,97.40,17.54,15.12,8.74,90.94,,/home/jonathan/UrbanizedAreasSegmentation/models/UNet-256-type-CE-diceW.pth
+UNet-256-type-CE-diceW,5,CE-dice,True,0.0001,20,0.342,1.177,97.85,94.62,45.32,95.25,97.44,21.57,14.02,3.29,90.26,,/home/jonathan/UrbanizedAreasSegmentation/models/UNet-256-type-CE-diceW.pth

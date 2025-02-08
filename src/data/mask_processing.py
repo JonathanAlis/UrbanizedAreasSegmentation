@@ -69,6 +69,11 @@ type_mapping = {
     9: 'Área urbanizada'
 }
 
+def get_type_density(mask):
+    lookup_table = np.array([0, 1, 2, 2, 3, 3, 3, 3, 4, 4]) #0->0, 1->1, 2->2, 3->2, 4->3, etc
+    type = np.take(lookup_table, mask)
+    return type
+
 def get_type(mask): #based on the type_mapping
     lookup_table = np.array([0, 1, 2, 2, 3, 3, 3, 3, 4, 4]) #0->0, 1->1, 2->2, 3->2, 4->3, etc
     type = np.take(lookup_table, mask)
@@ -76,7 +81,7 @@ def get_type(mask): #based on the type_mapping
 
 
 def get_binary(mask): #foreground and background
-    lookup_table = np.array([0, 1, 1, 1, 1, 1, 1, 1, 1, 1]) #0->0, 1->1, 2->1, etc
+    lookup_table = np.array([0, 1, 1, 1, 0, 0, 0, 0, 1, 1]) #0->0, 1->1, 2->1, etc
     type = np.take(lookup_table, mask)
     return type
 

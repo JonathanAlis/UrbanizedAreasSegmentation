@@ -2,7 +2,7 @@ import re
 import numpy as np
 
 
-def extract_integers(string):
+def subtile_offset(string):
     # Use regular expressions to find the patterns 'x=integer' and 'y=integer' (ignoring decimal points and non-digit characters after the numbers)
     x_match = re.search(r'x=(\d+)', string)
     y_match = re.search(r'y=(\d+)', string)

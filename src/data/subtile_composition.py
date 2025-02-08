@@ -42,16 +42,18 @@ def find_channel(string):
 
 
 
-def display_images(images: np.ndarray, limit: int =-1):
+def display_images(images: np.ndarray, limit: int =-1, save_to: str|None = None):
     fig, axes = plt.subplots(3, 4, figsize=(12, 9))
 
     for i, ax in enumerate(axes.flat):
-        im = np.squeeze(images[i])#[:limit,:limit]
+        im = np.squeeze(images[i])[:limit,:limit]
         ax.imshow(im, cmap='gray')
         ax.axis('off')
 
     plt.tight_layout()
     plt.show()
+    if save_to:
+        plt.savefig(save_to, bbox_inches='tight', pad_inches=0)
 
 def read_channel_by_dates(in_folder:str, tile:str, dates:list, channel:str, prefix:str, window:rasterio.windows.Window):
     all_data = []

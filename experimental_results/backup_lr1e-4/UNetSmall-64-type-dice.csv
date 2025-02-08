@@ -1,0 +1,11 @@
+Model,Epoch,Loss method,Weighted loss,Learning rate,Batch size,Train Loss,Val Loss,Val Accuracy,Val Micro F1,Val Macro F1,Val Weighted F1,Val C0,Val C1,Val C2,Val C3,Val C4,Status,Model path
+UNetSmall-64-type-dice,0,dice,True,0.0001,20,0.776,0.790,98.12,95.31,37.99,95.20,97.82,14.78,0.00,8.92,68.44, current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-dice.pth
+UNetSmall-64-type-dice,1,dice,True,0.0001,20,0.750,0.789,98.38,95.95,39.51,95.91,98.37,22.71,0.00,4.92,71.57, current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-dice.pth
+UNetSmall-64-type-dice,2,dice,True,0.0001,20,0.746,0.781,98.12,95.29,39.41,95.34,97.83,20.81,0.00,7.80,70.60, current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-dice.pth
+UNetSmall-64-type-dice,3,dice,True,0.0001,20,0.331,0.064,97.40,93.51,24.52,92.02,96.82,0.00,0.00,0.00,25.77, current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-dice.pth
+UNetSmall-64-type-dice,4,dice,True,0.0001,20,0.117,0.041,98.53,96.33,33.39,95.61,98.31,0.00,0.00,0.00,68.63, current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-dice.pth
+UNetSmall-64-type-dice,5,dice,True,0.0001,20,0.098,0.044,98.22,95.54,31.70,94.82,97.92,0.00,0.00,0.00,60.58,,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-dice.pth
+UNetSmall-64-type-dice,6,dice,True,0.0001,20,0.094,0.040,98.44,96.10,33.66,95.53,98.15,0.00,0.00,0.00,70.13, current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-dice.pth
+UNetSmall-64-type-dice,7,dice,True,0.0001,20,0.089,0.041,98.43,96.08,33.59,95.56,98.21,0.00,0.00,0.00,69.76,,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-dice.pth
+UNetSmall-64-type-dice,8,dice,True,0.0001,20,0.088,0.040,98.51,96.28,34.08,95.75,98.27,0.00,0.00,0.00,72.14,,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-dice.pth
+UNetSmall-64-type-dice,9,dice,True,0.0001,20,0.086,0.040,98.41,96.04,33.51,95.52,98.18,0.00,0.00,0.00,69.35,,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-dice.pth

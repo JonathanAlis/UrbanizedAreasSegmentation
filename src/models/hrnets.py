@@ -16,40 +16,23 @@ import torch
 import torch.nn as nn
 import timm
 
-
-def fuse_features(features, reduced_channels=64, debug = False):
-    """
-    Fuse feature maps incrementally after reducing channels.
-
-    Parameters:
-    features (list): List of feature maps from different resolutions.
-    reduced_channels (int): Number of channels to reduce each feature map to.
-
-    Returns:
-    torch.Tensor: Fused feature map.
-    """
-    # Reduce channels in each feature map
-    reducers = nn.ModuleList([
-        nn.Conv2d(f.shape[1], reduced_channels, kernel_size=1)
-        for f in features
-    ]).to(features[0].device)
-
-    # Reduce channels and upsample to the highest resolution
-    fused = reducers[0](features[0])
-    for i, f in enumerate(features[1:]):
-        if debug:
-            print(f"Before reduction: {f.shape}")
-        reduced_f = reducers[i + 1](f)  # Reduce channels
-        if debug:
-            print(f"After reduction: {reduced_f.shape}")
-            print(f"Fused shape: {fused.shape}")
-        
-        # Upsample and add to the fused feature map
-        fused = fused + F.interpolate(reduced_f, size=fused.shape[2:], mode="bilinear", align_corners=False)
+class ConvBlock(nn.Module):
+    def __init__(self, in_c, out_c, dropout=None):
+        super(ConvBlock, self).__init__()
+        layers = [
+            nn.Conv2d(in_c, out_c, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_c),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_c, out_c, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_c),
+            nn.ReLU(inplace=True),
+        ]
+        if dropout:
+            layers.append(nn.Dropout2d(p=dropout))
+        self.block = nn.Sequential(*layers)
     
-    return fused
-
-
+    def forward(self, x):
+        return self.block(x)
 
 class HRNetSegmentation(nn.Module):
     def __init__(self, in_channels, num_classes, backbone="hrnet_w18", pretrained=True, debug = False):
@@ -63,7 +46,7 @@ class HRNetSegmentation(nn.Module):
         in_channels (int): Number of input channels (default: 12).
         """
         super(HRNetSegmentation, self).__init__()
-
+        self.debug = debug
         # Load HRNet backbone from timm
         self.backbone = timm.create_model(backbone, features_only=True, pretrained=pretrained)
 
@@ -78,10 +61,11 @@ class HRNetSegmentation(nn.Module):
                 bias=self.backbone.conv1.bias is not None,
             )
 
-        # Segmentation head
-        in_channels = self.backbone.feature_info.channels()[0]  # Use the first feature map's channels
-        self.segmentation_head = nn.Conv2d(in_channels, num_classes, kernel_size=1)
-
+        
+        feature_channels = self.backbone.feature_info.channels()[0]
+        self.last_up = nn.ConvTranspose2d(feature_channels, feature_channels, kernel_size=2, stride=2)
+        self.output_layer = nn.Conv2d(feature_channels, num_classes, kernel_size=1)
+        
     def forward(self, x):
         """
         Forward pass.
@@ -94,18 +78,58 @@ class HRNetSegmentation(nn.Module):
         """
         # Extract features from the backbone
         features = self.backbone(x)  # List of feature maps from different resolutions
-
-        # Fuse feature maps incrementally
-        fused_features = fuse_features(features)
-
-        # Apply the segmentation head
-        output = self.segmentation_head(fused_features)
-
-        # Resize output to match input size (optional, depending on your use case)
-        output = F.interpolate(output, size=x.size()[2:], mode="bilinear", align_corners=False)
-
+        output = self.output_layer(self.last_up(features[0]))
         return output
 
+class HRNetSegmentation_(nn.Module):
+    def __init__(self, in_channels, num_classes, backbone='hrnet_w18', pretrained=True, debug=False):
+        super(HRNetSegmentation, self).__init__()
+        
+        # Load the HRNet backbone
+        self.backbone = timm.create_model(backbone, features_only=True, pretrained=pretrained)
+        
+        if in_channels != 3:
+            self.backbone.conv1 = nn.Conv2d(
+                in_channels,
+                self.backbone.conv1.out_channels,
+                kernel_size=self.backbone.conv1.kernel_size,
+                stride=self.backbone.conv1.stride,
+                padding=self.backbone.conv1.padding,
+                bias=self.backbone.conv1.bias is not None,
+            )
+        # Get the number of output channels from the backbone
+        self.channels = self.backbone.feature_info.channels()
+        
+        # Transposed convolution layers for upsampling and feature fusion
+        self.up1 = nn.ConvTranspose2d(self.channels[-1], self.channels[-2], kernel_size=4, stride=2, padding=1)
+        self.up2 = nn.ConvTranspose2d(self.channels[-2], self.channels[-3], kernel_size=4, stride=2, padding=1)
+        self.up3 = nn.ConvTranspose2d(self.channels[-3], self.channels[-4], kernel_size=4, stride=2, padding=1)
+        self.up4 = nn.ConvTranspose2d(self.channels[-4], self.channels[-5], kernel_size=4, stride=2, padding=1)
+        self.up5 = nn.ConvTranspose2d(self.channels[-5], self.channels[-5], kernel_size=4, stride=2, padding=1)
+        
+        self.conv1 = ConvBlock(self.channels[-2], self.channels[-2])
+        self.conv2 = ConvBlock(self.channels[-3], self.channels[-3])
+        self.conv3 = ConvBlock(self.channels[-4], self.channels[-4])
+        self.conv4 = ConvBlock(self.channels[-5], self.channels[-5])
+        
+        # Final layer to produce segmentation map
+        self.final_conv = ConvBlock(self.channels[-5], num_classes)
+        
+    def forward(self, x):
+        # Extract multi-scale features from HRNet
+        features = self.backbone(x)
+        x = self.up1(features[-1]) + features[-2]
+        x = self.conv1(x)
+        x = self.up2(x) + features[-3]
+        x = self.conv2(x)
+        x = self.up3(x) + features[-4]
+        x = self.conv3(x)
+        x = self.up4(x) + features[-5]
+        x = self.conv4(x)
+        x = self.up5(x)
+        # Final convolution to produce segmentation map
+        x = self.final_conv(x)
+        return x
 
 # Testing
 if __name__ == "__main__":

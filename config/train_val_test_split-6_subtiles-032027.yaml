@@ -1,0 +1,42 @@
+num_subtiles: 6
+test_files:
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=5280_y=1760.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=7040_y=5280.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=0_y=1760.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=5280_y=7040.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=8800_y=1760.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=0_y=0.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=8800_y=7040.tif
+tiles:
+- '032027'
+train_files:
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=1760_y=1760.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=8800_y=8800.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=3520_y=3520.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=5280_y=3520.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=0_y=3520.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=3520_y=5280.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=5280_y=5280.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=1760_y=0.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=8800_y=5280.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=0_y=5280.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=8800_y=0.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=5280_y=8800.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=7040_y=7040.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=0_y=7040.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=3520_y=7040.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=1760_y=3520.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=3520_y=8800.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=3520_y=1760.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=1760_y=5280.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=7040_y=3520.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=5280_y=0.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=7040_y=1760.tif
+val_files:
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=8800_y=3520.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=0_y=8800.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=3520_y=0.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=1760_y=8800.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=7040_y=0.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=1760_y=7040.tif
+- /home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_032027/6x6_subtiles/S2-16D_V2_032027_x=7040_y=8800.tif

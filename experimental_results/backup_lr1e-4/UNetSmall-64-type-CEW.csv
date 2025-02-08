@@ -1,0 +1,11 @@
+Model,Epoch,Loss method,Weighted loss,Learning rate,Batch size,Train Loss,Val Loss,Val Accuracy,Val Micro F1,Val Macro F1,Val Weighted F1,Val C0,Val C1,Val C2,Val C3,Val C4,Status,Model path
+UNetSmall-64-type-CEW,0,CE,True,0.0001,20,0.586,0.700,95.64,89.09,38.73,92.01,94.65,12.67,20.36,4.48,61.51, current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-CEW.pth
+UNetSmall-64-type-CEW,1,CE,True,0.0001,20,0.327,0.777,97.22,93.06,42.45,94.51,96.82,20.68,20.47,4.32,69.96,,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-CEW.pth
+UNetSmall-64-type-CEW,2,CE,True,0.0001,20,0.253,0.721,97.30,93.25,44.75,94.67,96.90,15.62,35.94,5.59,69.68,,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-CEW.pth
+UNetSmall-64-type-CEW,3,CE,True,0.0001,20,0.220,0.620,96.88,92.21,43.82,94.20,96.25,21.53,20.42,6.64,74.24, current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-CEW.pth
+UNetSmall-64-type-CEW,4,CE,True,0.0001,20,0.187,0.760,97.41,93.52,43.90,94.85,97.24,23.48,23.85,6.78,68.16,,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-CEW.pth
+UNetSmall-64-type-CEW,5,CE,True,0.0001,20,0.160,0.742,97.32,93.29,43.99,94.55,96.94,19.87,28.24,7.37,67.54,,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-CEW.pth
+UNetSmall-64-type-CEW,6,CE,True,0.0001,20,0.144,0.606,97.59,93.97,45.64,95.27,97.68,20.41,32.22,10.44,67.44, current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-CEW.pth
+UNetSmall-64-type-CEW,7,CE,True,0.0001,20,0.135,0.751,98.00,95.01,49.19,95.85,97.85,23.67,39.87,10.19,74.37,,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-CEW.pth
+UNetSmall-64-type-CEW,8,CE,True,0.0001,20,0.113,1.521,98.39,95.97,47.46,96.13,98.16,28.99,29.65,5.38,75.12,,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-CEW.pth
+UNetSmall-64-type-CEW,9,CE,True,0.0001,20,0.111,0.785,97.96,94.89,49.28,95.64,97.59,24.02,40.47,9.50,74.84,,/home/jonathan/UrbanizedAreasSegmentation/models/UNetSmall-64-type-CEW.pth

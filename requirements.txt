@@ -9,3 +9,14 @@ scikit-learn
 pyyaml
 torch
 torchvision
+tqdm
+timm
+torchview
+torchinfo
+torch-lr-finder
+opencv-python
+ipywidgets
+seaborn
+scikit-image
+git+https://github.com/lucasb-eyer/pydensecrf.git
+git+https://github.com/OSGeo/GDAL.git
