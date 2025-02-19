@@ -28,7 +28,7 @@ def apply_dense_crf(image, logits):
     d.addPairwiseEnergy(create_pairwise_gaussian((3, 3), (W, H)), compat=3)
     
     # Pairwise Bilateral filter
-    d.addPairwiseEnergy(create_pairwise_bilateral((50, 50), (10, 10, 10), image, (W, H)), compat=5)
+    d.addPairwiseEnergy(create_pairwise_bilateral((50, 50), (10, 10, 10), image, chdim=2), compat=5)
 
     Q = np.array(d.inference(10))
     return Q.reshape((num_classes, H, W))
@@ -92,17 +92,26 @@ import numpy as np
 import torch
 import pydensecrf.densecrf as dcrf
 from pydensecrf.utils import unary_from_softmax, create_pairwise_bilateral, create_pairwise_gaussian
-from skimage.morphology import remove_small_objects
+from skimage.morphology import remove_small_objects, remove_small_holes
 from tqdm import tqdm
 
 
 import src.data.utils as utils
 import src.data.preprocess_data as data
 
-def remove_small(final_mask, min_size = 10):
-    final_mask = remove_small_objects(final_mask, min_size=min_size)
-    return final_mask
 
+def remove_small(mask, min_size = 10):
+    import numpy as np
+    from skimage.morphology import remove_small_objects
+
+    cleaned_mask = np.zeros_like(mask)
+    for class_value in [1, 2, 3, 4]:
+        binary_mask = (mask == class_value)
+        cleaned_binary_mask = remove_small_objects(binary_mask, min_size=min_size)
+        cleaned_binary_mask = remove_small_holes(cleaned_binary_mask, area_threshold=min_size)
+
+        cleaned_mask[cleaned_binary_mask] = class_value
+    return cleaned_mask
 
 import cv2
 import numpy as np
@@ -154,7 +163,7 @@ import numpy as np
 import pydensecrf.densecrf as dcrf
 from pydensecrf.utils import unary_from_softmax
 
-def apply_dense_crf(image: np.ndarray, logits: np.ndarray, n_iter = 10, use_custom_compat: bool = False):
+def apply_dense_crf_(image: np.ndarray, logits: np.ndarray, n_iter = 10, use_custom_compat: bool = False):
     """
     Applies DenseCRF post-processing to the given logits with optional custom compatibility rules.
 
@@ -267,7 +276,7 @@ def smooth_logits(logits, method='gaussian', sigma=1):
         return np.stack([denoise_tv_chambolle(logits[i], weight=0.1) for i in range(logits.shape[0])])
     return logits
 
-def apply_dense_crf(image, logits):
+def apply_dense_crf__(image, logits):
     """Applies CRF to refine logits."""
     import pydensecrf.densecrf as dcrf
     from pydensecrf.utils import unary_from_softmax, create_pairwise_bilateral, create_pairwise_gaussian
@@ -282,10 +291,12 @@ def apply_dense_crf(image, logits):
     
     # Pairwise Bilateral filter
     print(image.shape)
-    d.addPairwiseEnergy(create_pairwise_bilateral((50, 50), (10, 10, 10), image, (W, H)), compat=5)
+    d.addPairwiseEnergy(create_pairwise_bilateral((50, 50), (10, 10, 10), image, chdim=2), compat=5)
+    #(sdims=(80, 80), schan=(13, 13, 13),img=img, chdim=2)
 
     Q = np.array(d.inference(10))
-    return Q.reshape((num_classes, H, W))
+    refined = np.argmax(Q, axis=0).reshape(H, W)
+    return Q.reshape((num_classes, H, W)), refined
 
 def morphological_operations(mask, kernel_size=3):
     """Apply opening and closing to remove noise and smooth edges."""
@@ -300,45 +311,6 @@ def morphological_operations(mask, kernel_size=3):
     
     return cleaned
 
-def apply_gdal_sieve(segmentation_mask, min_size=100):
-    """Remove small isolated regions using GDAL Sieve."""
-    driver = gdal.GetDriverByName("MEM")
-    src_ds = driver.Create("", segmentation_mask.shape[1], segmentation_mask.shape[0], 1, gdal.GDT_Int32)
-    src_ds.GetRasterBand(1).WriteArray(segmentation_mask)
-
-    gdal.SieveFilter(src_ds.GetRasterBand(1), None, src_ds.GetRasterBand(1), threshold=min_size)
-
-    return src_ds.GetRasterBand(1).ReadAsArray()
-
-def full_segmentation_pipeline(image, logits, smooth_method='gaussian', sigma=1, min_size=100, kernel_size=3):
-    """
-    Full segmentation refinement pipeline:
-    1. Smooth logits
-    2. Apply CRF
-    3. Convert to discrete classes
-    4. Apply morphological opening & closing
-    5. Remove small isolated regions using GDAL sieve
-    6. Final morphological cleanup
-    """
-    # Step 1: Smooth logits
-    logits = smooth_logits(logits, method=smooth_method, sigma=sigma)
-
-    # Step 2: Apply CRF
-    logits = apply_dense_crf(image, logits)
-
-    # Step 3: Convert logits to class mask
-    segmentation_mask = np.argmax(logits, axis=0)
-
-    # Step 4: Morphological opening & closing
-    segmentation_mask = morphological_operations(segmentation_mask, kernel_size=kernel_size)
-
-    # Step 5: Remove small regions using GDAL sieve
-    segmentation_mask = apply_gdal_sieve(segmentation_mask, min_size=min_size)
-
-    # Step 6: Final cleanup (optional)
-    segmentation_mask = morphological_operations(segmentation_mask, kernel_size=kernel_size)
-
-    return segmentation_mask
 
 
 class ReconstructTile:
@@ -410,14 +382,50 @@ class ReconstructTile:
         self.preds = np.argmax(self.probs, axis=0)
         
         
-    def post_process(self):
+    def post_process(self, x_idx, y_idx):
         import numpy as np
         from scipy.ndimage import binary_opening, binary_closing, distance_transform_edt
         from skimage.morphology import disk
 
 
-
+        
         ppps = self.ss[0] #post processing patch size
+
+        x_range = list(range(0,self.size[0],self.ss[0]))
+        y_range = list(range(0,self.size[1],self.ss[1]))
+
+        print(x_range)
+        print(y_range)
+
+        x=x_range[x_idx]
+        y=y_range[y_idx]
+        labels = self.labels[x:x+self.ss[0], y:y+self.ss[1]]
+
+        logits_patch = self.logits[:,x:x+self.ss[0], y:y+self.ss[1]]
+        smooth_logits_patch = smooth_logits(logits_patch, method='gaussian', sigma=1)
+
+        prob_patch = softmax(logits_patch)#self.probs[:,x:x+self.ss[0], y:y+self.ss[1]]
+        rgb_patch = self.rgb_image[x:x+self.ss[0], y:y+self.ss[1],:]
+        pred_patch = self.preds[x:x+self.ss[0], y:y+self.ss[1]]
+
+
+        clean_pred = apply_dense_crf(rgb_patch, logits_patch)#(pred_patch, kernel_size=5))
+        clean_pred = np.argmax(clean_pred, axis=0).reshape(self.ss)
+        clean_noholes = remove_small(clean_pred, min_size = 50)
+        clean_noholes_2 = refine_segmentation(clean_pred, kernel_size=5)
+        noholes = remove_small(pred_patch, min_size = 50)
+        noholes2 = refine_segmentation(pred_patch, kernel_size=5)
+        rules = enforce_enclosure_rules(clean_noholes)
+
+
+
+        return labels, pred_patch, clean_pred, clean_noholes, clean_noholes_2, noholes, noholes2, rules
+
+        logits_patch = self.logits[:,i:i+self.ss[0], j:j+self.ss[1]]
+        rgb_patch = self.rgb_image[i:i+self.ss[0], j:j+self.ss[1],:]
+        pred_patch = self.preds[i:i+self.ss[0], j:j+self.ss[1]]
+        
+
         for i in tqdm(range(0,self.size[0],self.ss[0])):
             for j in tqdm(range(0,self.size[1],self.ss[1]),leave=False):
                 logits_patch = self.logits[:,i:i+self.ss[0], j:j+self.ss[1]]
@@ -425,19 +433,22 @@ class ReconstructTile:
                 pred_patch = self.preds[i:i+self.ss[0], j:j+self.ss[1]]
                 clean = full_segmentation_pipeline(rgb_patch, logits_patch, smooth_method='gaussian', sigma=1, min_size=100, kernel_size=5)
                 
-                crf, Q = apply_dense_crf(rgb_patch, logits_patch, use_custom_compat=True, n_iter=10)
+                crf, Q = apply_dense_crf__(rgb_patch, logits_patch)#, use_custom_compat=True, n_iter=10)
                     
                 #smooth = smooth_segmentation(pred_patch, kernel_size=5)
-                clean_pred = apply_dense_crf(self.image(pred_patch, kernel_size=5))
+                clean_pred = apply_dense_crf(self.image, logits_patch)#(pred_patch, kernel_size=5))
                 clean_crf = remove_small(crf, min_size = 50)
                 vazios = enforce_enclosure_rules(pred_patch)
 
+                return clean, crf, Q, clean_crf, clean_pred, vazios
                 self.clean[i:i+self.ss[0], j:j+self.ss[1]] = clean
                 self.crf[i:i+self.ss[0], j:j+self.ss[1]] = crf
                 self.Q[i:i+self.ss[0], j:j+self.ss[1]] = Q
                 self.cleaned_crf[i:i+self.ss[0], j:j+self.ss[1]] = clean_crf
                 self.cleaned_preds[i:i+self.ss[0], j:j+self.ss[1]] = clean_pred
                 self.vi_completion[i:i+self.ss[0], j:j+self.ss[1]] = vazios
+                break
+            break
 
 import numpy as np
 import cv2

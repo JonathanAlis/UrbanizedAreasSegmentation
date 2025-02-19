@@ -191,248 +191,16 @@ d4_transforms = {0 : None,
 
 
 
-class SubtileDataset_(Dataset):
-    def __init__(self, files: list, num_subtiles: int, classes_mode: str = 'type', patch_size: int = 256, stride: int = 128, data_augmentation: bool = False, augmentation_thresholds:tuple = (0.01, 0.25), return_imgidx: bool = False, treat_nans: bool|str = False, debug: bool = True):
-        self.image_files = files
-        self.opened_files = {fp:rasterio.open(fp) for fp in self.image_files}      
-        self.patch_size = patch_size
-        self.stride = stride
-        self.num_subtiles = num_subtiles
-        self.working_dir = os.path.abspath('..')
-        self.classes_mode = classes_mode
-        self.treat_nans = treat_nans
-        self.mask_params = self.get_mask_params()
-        self.data_augmentation = data_augmentation
-        self.return_imgidx = return_imgidx
-        self.debug = debug
-        self.transforms = d4_transforms #global
-        self.augmented_thresholds = augmentation_thresholds
-
-        if self.classes_mode == 'binary':
-            self.num_classes = 2
-        elif self.classes_mode == 'type':
-            self.num_classes = 5
-        elif self.classes_mode == 'density':
-            self.num_classes = 4
-        elif self.classes_mode == 'all':
-            self.num_classes = 9
-        else:
-            raise('Choose one of the class_mode: binaty, type, density or all.')
-            
-
-        with rasterio.open(files[0]) as im:
-            image = im.read()
-            self.subtile_size = image.shape
-
-
-        count_da = 0
-        total = 0
-        self.patches=[]
-
-        
-        proportions = []
-        for f, mp in zip(self.image_files, self.mask_params):
-            for x in range(0, self.subtile_size[1], self.stride):
-                for y in range(0, self.subtile_size[2], self.stride):
-                    idx_dict = {'file':f, 
-                                'x':x, 
-                                'y':y, 
-                                'transform' : 0,
-                                'mask_params':mp,
-                                'augmented' : 0
-                                }                        
-                    self.patches.append(idx_dict)
-                    total+=1
-                    
-        if self.data_augmentation:     
-            print('Doing data augmentation...')
-            counter_pixel, counter_img = self.count_classes()
-            count_da = 0
-            images_da = 0
-            for f, mp in zip(self.image_files, self.mask_params):
-                for x in range(0, self.subtile_size[1], self.stride):
-                    for y in range(0, self.subtile_size[2], self.stride):
-                        mask = self.get_mask(f, x, y)
-                        augment_rate = self.check_augmentation_2(mask, counter_img)# thresholds = self.augmented_thresholds)
-                        
-                        aug_count = 0
-                        for aug_rate in range(math.ceil(augment_rate/8)):
-                            for t_idx in range(1,len(d4_transforms)):
-                                aug_count+=1
-                                idx_dict = {'file':f, 
-                                    'x':x, 
-                                    'y':y, 
-                                    'transform' : t_idx,
-                                    'mask_params':mp,
-                                    'augmented' : aug_count,
-                                    }
-                                self.patches.append(idx_dict)
-                                if aug_count == aug_rate:
-                                    break   
-                        count_da+=aug_count
-                        images_da+=1
-                                                             
-            print(f'Starting from {total} images, augmented {images_da} images, creating {count_da} images. Total {len(self)}')
-            
-    def get_mask(self, file: str, x: int = 0, y: int = 0, return_tensor: bool = False):    
-        
-        subtile_x, subtile_y = get_x_y(file)
-        tile = get_tile(file)
-        #print('x, y: ', x, y, 'subtiles:', subtile_x, subtile_y)
-        mask_reader = MaskReader(os.path.join(self.working_dir,f"data/masks/mask_raster_{tile}.tif"),
-                                 classes_mode = self.classes_mode
-                                )
-        #subtile_size = 10560//self.num_subtiles
-        mask = mask_reader.read_window(x+subtile_x, y+subtile_y, patch_size = self.patch_size, return_torch = return_tensor)
-        
-        return mask #shape (5, w, h)
-    
-    def check_augmentation(self, mask: np.ndarray | torch.Tensor, thresholds: tuple = (0.01, 0.25)):
-        if self.classes_mode == 'type':
-            ignore_values = (0, 4)
-        elif self.classes_mode == 'density':
-            ignore_values = (0, 3)
-        elif self.classes_mode == 'binary':
-            return False, -1
-        else:
-            ignore_values = (0, 8)
-
-
-        minority_mask = mask[(mask != ignore_values[0]) & (mask != ignore_values[1])]
-        #minority_mask = mask[(mask != ignore_values[0])]
-
-        unique_values, counts = np.unique(minority_mask, return_counts=True)
-        unique_values = unique_values.tolist()
-        counts = counts.tolist()
-        if len(unique_values)==1:
-            return False, -1
-        if isinstance(mask, np.ndarray):
-            proportions = [c/mask.size for c in counts]
-        elif isinstance(mask, torch.Tensor):
-            proportions = [c/mask.numel() for c in counts]
-        if thresholds[0]<sum(proportions)<thresholds[1]:
-            #print('data augmentation')
-            #print(counts)
-            #print(proportions, unique_values)
-            #print('SUMMM:', sum(proportions))
-            return True, sum(proportions)
-        return False, sum(proportions)
-    
-    def check_augmentation_2(self, mask: np.ndarray | torch.Tensor, class_count: list, threshold: float = 0.01):
-        #check it there is a class, and if it is greater than threshold
-        
-        rate = [c for c in class_count]
-        img_percentual = [c/len(self) for c in class_count]
-        rate = [1/c for c in img_percentual]
-        augment_by = 0
-        if isinstance(mask, np.ndarray):
-            unique_classes, counts = np.unique(mask, return_counts=True) 
-        elif isinstance(mask, torch.Tensor):
-            unique_classes, counts = mask.unique(return_counts=True)   
-        for class_, count in zip(unique_classes, counts):
-            if count > threshold * self.patch_size**2:
-                if augment_by < rate[class_]:
-                    augment_by = rate[class_]
-
-        return augment_by - 1
-    
-    def get_mask_params(self):    
-        
-        mask_params = [] 
-        for file in self.image_files:
-            subtile_x, subtile_y = get_x_y(file)
-            tile = get_tile(file)
-            mask_file = os.path.join(self.working_dir,f"data/masks/mask_raster_{tile}.tif")
-            subtile_size = 10560//self.num_subtiles
-            #mask_reader = MaskReader(os.path.join(self.working_dir,f"data/masks/mask_raster_{tile}.tif"),
-            #                            classes_mode = self.classes_mode
-            #                            )
-            #mask = mask_reader.read_window(0, 0, subtile_x, subtile_y, patch_size = subtile_size)
-            mask_params.append({'file' : mask_file,
-                                'subtile_x' : subtile_x,
-                                'subtile_y' : subtile_y,
-                                'subtile_size' : subtile_size,
-                                'classes_mode' : self.classes_mode})
-        return mask_params
-
-    def count_classes(self):
-        class_counts = torch.zeros(self.num_classes, dtype=torch.int64)
-        class_counts_img = torch.zeros(self.num_classes, dtype=torch.int64)
-        
-        for idx in range(self.__len__()):
-            x, y, f = self.idx_to_xy(idx, return_filename=True)
-            mask = self.get_mask(f, x = x, y = y, return_tensor = True)
-            unique_classes, counts = mask.unique(return_counts=True)   
-            for class_idx, count in zip(unique_classes, counts): 
-                class_counts[class_idx] += count.item()
-                if count.item() > 0:
-                    class_counts_img[class_idx]+=1
-        return class_counts,class_counts_img
-    
-
-    def idx_to_xy(self, idx, return_filename = False):
-        f = self.patches[idx]['file']
-        subtile_x, subtile_y = get_x_y(f)  
-        x, y = self.patches[idx]['x'], self.patches[idx]['y']
-        if x < 0:
-            x = 0
-        if y < 0:
-            y = 0
-        if x > self.subtile_size[1] - self.patch_size:
-            x = self.subtile_size[1] - self.patch_size
-        if y > self.subtile_size[2] - self.patch_size:
-            y = self.subtile_size[2] - self.patch_size
-        if return_filename:
-            return x, y, f
-        return x, y
-
-
-    def __len__(self):
-        return len(self.patches)
-
-    def __getitem__(self, idx):
-        x, y, f = self.idx_to_xy(idx, return_filename=True)        
-        
-        window = rasterio.windows.Window(x ,y , self.patch_size, self.patch_size)            
-        image = preprocess_data(self.opened_files[f].read(window = window), treat_nans = self.treat_nans, return_torch=True) #np.float32
-
-        mask_params = self.patches[idx]['mask_params']
-        mask_file = mask_params['file']
-        mask = self.get_mask(f, x = x, y = y, return_tensor = True)        
-        
-
-        if self.debug:
-            print('LOADING...')
-            print(idx)
-            print(f)
-            print(mask_params['file'])
-            print('x, y in subtile:',x, y)
-
-        # applying tranform
-        transf_idx = self.patches[idx]['transform']
-
-        if transf_idx > 0:
-            image = self.transforms[transf_idx](image)
-            mask = self.transforms[transf_idx](mask)
-            
-        if not self.return_imgidx:
-            return image, mask
-        else:
-            return image, mask, x, y, f
-
-    def __del__(self):
-        # Close all the files when the dataset object is destroyed
-        for src in self.opened_files.values():
-            src.close()
-
-
 class SubtileDataset(Dataset):
-    def __init__(self, files: list|str, patch_size: int = 256, stride: int = 128, dynamic_sampling: bool = False, data_augmentation: bool = False, num_subtiles: int = 0, classes_mode: str = 'type', return_imgidx: bool = False, ignore_most_nans: bool = True, treat_nans: bool|str = False, debug: bool = False, set:str = ''):
+    def __init__(self, files: list|str, patch_size: int = 256, stride: int = 128, 
+                 dynamic_sampling: bool = False, data_augmentation: bool = False, 
+                 num_subtiles: int = 0, classes_mode: str = 'type', return_imgidx: bool = False, 
+                 ignore_most_nans: bool = True, treat_nans: bool|str = False, debug: bool = False, set:str = ''):
         
         #definitions
         self.working_dir = os.path.abspath('..')
         self.transforms = d4_transforms #global
-        self.min_step = 32
+        self.min_step = max(patch_size//8, 16)
         self.daug_threhshold = 0.01
 
         #mandatory params
@@ -470,7 +238,7 @@ class SubtileDataset(Dataset):
                     loaded_patches = True
             else:
                 print(filename)
-                print('dataset_6-subtiles_mode-type_patchsize-256_stride-256_dynamicsampling-True_dataaugmentation-True_set-train_files_source-train_val_test_split-6_subtiles-032027-stratified_by_type')
+                #print('dataset_6-subtiles_mode-type_patchsize-256_stride-256_dynamicsampling-True_dataaugmentation-True_set-train_files_source-train_val_test_split-6_subtiles-032027-stratified_by_type')
                 print(f"File not found, initializing normally...")
                 
 
@@ -512,7 +280,7 @@ class SubtileDataset(Dataset):
                                 'x':x, 
                                 'y':y, 
                                 'transform' : 0,
-                                'augmented' : 0
+                                'step_shift' : 0
                                 }               
                             self.patches.append(idx_dict)
                             total_not_augmented+=1
@@ -575,16 +343,18 @@ class SubtileDataset(Dataset):
                             ]
         
         print(minority_classes)
+        steps = [self.stride // 2**math.floor(math.log2(math.sqrt(counter_img[0]//counter_img[mc]))) for mc in minority_classes] 
+        print(steps)
         #print([math.sqrt(counter_img[0]//counter_img[mc]) for mc in minority_classes])
         aug_indices = []
         for i_d in tqdm(self.patches):
             x, y, f = i_d['x'], i_d['y'], i_d['file']
             #print(x, y, f)
-            
+            center_mask = self.get_mask(f, x, y)
             for s, mc in enumerate(minority_classes):
-                if counter_img[mc] > 0:
+                if counter_img[mc] > 0 and mc in center_mask:
                     ### STEP DINÂMICO
-                    print(step)
+                    
                     step = self.stride // 2**math.floor(math.log2(math.sqrt(counter_img[0]//counter_img[mc])))#math.ceil(2**(s+1) counter_img[0]//counter_img[mc]
                     #print(step, counter_img[0]/counter_img[mc])
                     if step < self.min_step:
@@ -599,18 +369,221 @@ class SubtileDataset(Dataset):
                                         #print('.', end='')
                                         mask = self.get_mask(f, x+x_shift, y+y_shift)
                                         if mc in mask:
+                                            #print(np.unique_counts(mask))
+
                                             idx_dict = {'file':f, 
                                                         'x':x+x_shift, 
                                                         'y':y+y_shift, 
                                                         'transform' : 0,
-                                                        'augmented' : 0,
+                                                        'step_shift' : step,
                                                         }
                                             if idx_dict not in self.patches:
                                                 aug_indices.append(idx_dict)
                                                 num_included_images+=1
+        if 0:
+            print(aug_indices)
         self.patches.extend(aug_indices)
         return num_included_images
 
+    def plot_sampled_outlines(self, area_limits=None, save_to = None):
+        if not self.dynamic_sampling:
+            return
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as patches
+        import matplotlib.colors as mcolors
+
+        len(self.image_files)
+        rows = min(2, math.floor(math.sqrt(len(self.image_files))))
+        cols = min(2, math.floor(math.sqrt(len(self.image_files))))
+        fig, axes = plt.subplots(rows, cols, figsize=(cols * 7, rows * 7))  # Adjust figure size
+        axes = axes.flatten()  # Flatten for easy iteration
+
+
+        class_colors = {
+            0: "#000000",  # Black (Background)
+            1: "#0000FF",  # Cyan
+            2: "#FF00FF",  # Magenta
+            3: "#FFFF00",  # Yellow
+            4: "#FFFFFF"   # White
+        }
+
+        cmap = mcolors.ListedColormap([class_colors[i] for i in sorted(class_colors.keys())])
+        bounds = sorted(class_colors.keys()) + [max(class_colors.keys()) + 1]
+        norm = mcolors.BoundaryNorm(bounds, cmap.N)
+        
+
+        for ax, chosen_file in zip(axes,self.image_files):
+            # Determine limits automatically if not provided
+            if area_limits is None:
+                x_min = min(square["x"] for square in self.patches)
+                x_max = max(square["x"] + self.patch_size for square in self.patches)
+                y_min = min(square["y"] for square in self.patches)
+                y_max = max(square["y"] + self.patch_size for square in self.patches)
+            else:
+                x_min, x_max, y_min, y_max = area_limits
+            
+            mask = np.zeros((x_max-x_min, y_max-y_min), dtype=np.uint8)
+            
+            squares = []
+            for idx in range(len(self)):
+                x, y, f = self.idx_to_xy(idx, return_filename=True)
+                step = self.patches[idx]['step_shift']
+                if x_min <= x <= x_max and y_min <= y <= y_max and f == chosen_file:
+                    mask_ = self.get_mask(f, x = x, y = y, return_tensor = True)  
+                    mask[y:y+self.patch_size, x:x+self.patch_size] = mask_
+                    squares.append({'x':x, 'y':y, 'step':step})
+
+            im = ax.imshow(mask, cmap=cmap, extent=[0, mask.shape[1], mask.shape[0], 0], alpha=1)
+
+
+            # Draw grid
+            ax.set_xticks(range(x_min, x_max + 1, self.patch_size))
+            ax.set_yticks(range(y_min, y_max + 1, self.patch_size))
+            #ax.grid(True, linestyle="--", linewidth=0.5)
+
+            # Plot squares
+            for square in squares:
+                if x_min <= square["x"] <= x_max and y_min <= square["y"] <= y_max:
+                    if square['step'] == 0: 
+                        rect = patches.Rectangle(
+                            (square["x"], square["y"]),  
+                            self.patch_size, self.patch_size,  
+                            linewidth=1, edgecolor="green", facecolor="none"
+                        )
+                    else:
+                        rect = patches.Rectangle(
+                            (square["x"], square["y"]),  
+                            self.patch_size, self.patch_size,  
+                            linewidth=1, edgecolor="red", facecolor="none"
+                        )
+                    ax.add_patch(rect)
+
+            # Set limits
+            ax.set_xlim(x_min, x_max)
+            ax.set_ylim(y_min, y_max)
+            #ax.set_aspect('equal')
+            #cbar = plt.colorbar(im, ax=ax, ticks=unique_values)
+            
+        class_labels = {
+                0: "Fundo",
+                1: "Loteamento vazio",
+                2: "Outros equipamentos",
+                3: "Vazio intraurbano",
+                4: "Área Urbanizada"
+            }
+        # Create a discrete colorbar (legend)
+        #cbar_ax = fig.add_axes([0.92, 0.3, 0.02, 0.4])  
+        #cbar = plt.colorbar(im, cax=cbar_ax, ticks=list(class_colors.keys()))
+        #if class_labels:
+        #    cbar.set_ticklabels([class_labels[val] for val in class_colors.keys()])
+        #cbar.ax.tick_params(size=0)  # Remove unnecessary tick marks
+        legend_patches = [
+        patches.Patch(facecolor=class_colors[val], edgecolor="black", linewidth=1, label=class_labels[val])
+            for val in class_colors.keys()
+        ]
+        legend_patches = [patches.Patch(color=class_colors[val], label=class_labels[val]) for val in class_colors.keys()]
+        fig.legend(handles=legend_patches, loc="upper right", title="Classes")
+        # Assign class labels if provided
+        
+        plt.tight_layout()#rect=[0, 0, 0.85, 1])  # Adjust layout to fit colorbar
+        if save_to:
+            plt.savefig(save_to, dpi=300, bbox_inches="tight")
+        plt.show()
+
+
+
+    def plot_transformed(self, save_to=None):
+        if not self.data_augmentation:
+            return
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as patches
+        import matplotlib.colors as mcolors
+        max_classes_in_patch = 0
+        
+        for idx in range(len(self)):
+            transform = self.patches[idx]['transform']
+            x, y, f = self.patches[idx]['x'], self.patches[idx]['y'],self.patches[idx]['file']
+            vals, counts = np.unique_counts(self.get_mask(f, x, y))
+            if len(vals)>max_classes_in_patch and transform > 0:
+                max_classes_in_patch = len(vals)
+                chosen_patch = self.patches[idx]
+
+        t_imgs = [torch.zeros((self.patch_size, self.patch_size), dtype = torch.uint8) for _ in range(8)]
+        count = 0
+        for idx in range(len(self)):
+            x, y, f, transform, step = self.patches[idx]['x'], self.patches[idx]['y'], self.patches[idx]['file'], self.patches[idx]['transform'], self.patches[idx]['step_shift']
+            if x == chosen_patch['x'] and y == chosen_patch['y'] and f == chosen_patch['file'] and step == chosen_patch['step_shift']:
+                count +=1
+                t_imgs[self.patches[idx]['transform']] = self.get_mask(f, x, y, return_tensor=True)#.cpu().detach().numpy()
+            if count == 8:
+                break
+        plt.figure(figsize=(20,20))
+        rows = 2
+        cols = 4
+        fig, axes = plt.subplots(rows, cols, figsize=(cols * 5, rows * 5))  # Adjust figure size
+        axes = axes.flatten()  # Flatten for easy iteration
+
+        class_colors = {
+            0: "#000000",  # Black (Background)
+            1: "#0000FF",  # Blue
+            2: "#FF00FF",  # Magenta
+            3: "#FFFF00",  # Yellow
+            4: "#FFFFFF"   # White
+        }
+
+        cmap = mcolors.ListedColormap([class_colors[i] for i in sorted(class_colors.keys())])
+        bounds = sorted(class_colors.keys()) + [max(class_colors.keys()) + 1]
+        norm = mcolors.BoundaryNorm(bounds, cmap.N)
+
+        for i, ax, mask in zip(range(8), axes,t_imgs):
+            if i > 0:
+                mask = self.transforms[i](mask)
+            mask = mask.squeeze().numpy()
+            im = ax.imshow(mask, cmap=cmap, extent=[0, mask.shape[1], mask.shape[0], 0], alpha=1)
+            ax.axis('off')
+
+        fig.tight_layout()
+        if save_to:
+            plt.savefig(save_to, dpi=300, bbox_inches="tight")
+        plt.show()
+         
+    def stats(self):
+        num_patches = len(self.patches)
+        num_subtiles = self.num_subtiles
+        total_pixels = 0
+        stats = {label:{'num_patches':0, 'num_pixels':0, 'pct_patches':0, 'pct_pixels':0, 'num_dynamic':0, 'num_augmented':0} for label in range(self.num_classes)}
+        for idx in range(len(self)):
+            x, y, f = self.idx_to_xy(idx, return_filename=True)
+            x, y, transform, step = self.patches[idx]['x'], self.patches[idx]['y'], self.patches[idx]['transform'], self.patches[idx]['step_shift']
+            mask = self.get_mask(f, x = x, y = y, return_tensor = True)  
+            vals, counts = torch.unique(mask, return_counts = True)
+            vals = vals.tolist()
+            counts = counts.tolist()
+            total_pixels += mask.numel()
+            #print(mask.numel())
+            #print(counts)
+            assert sum(counts)==mask.numel()
+            for label, count in zip(vals, counts):
+                stats[label]['num_patches']+=1
+                stats[label]['num_pixels']+=count
+                if step > 0:
+                    stats[label]['num_dynamic']+=1
+                if transform>0:
+                    stats[label]['num_augmented']+=1
+        for label in range(self.num_classes):
+            stats[label]['pct_patches'] = stats[label]['num_patches']/num_patches
+            stats[label]['pct_pixels'] = stats[label]['num_pixels']/total_pixels
+        
+
+        print('Total subtiles:', num_subtiles)
+        print('Total patches:', num_patches)
+        print('Total pixels:', num_patches)
+        print('Per class:')
+        for label in range(self.num_classes):
+            print(f'Class {label}:')
+            print(stats[label])
+            
+                
     def has_more_than_percent_negative(self, f, x, y, threshold):
         data = self.get_mask(f, x, y)
         if isinstance(data, np.ndarray):
@@ -642,7 +615,8 @@ class SubtileDataset(Dataset):
 
         aug_indices = []
         for i_d in tqdm(self.patches):
-            x, y, f = i_d['x'], i_d['x'], i_d['file']
+            x, y, f, step = i_d['x'], i_d['x'], i_d['file'], i_d['step_shift']
+            
             mask = self.get_mask(f, x, y)
             augment_rate = self.check_augmentation_2(mask, counter_img)# thresholds = self.augmented_thresholds)
             #print(augment_rate, ',x:', x, ',y:', y, end = '|')#f'|{i_d["test_id"]}| ')
@@ -654,7 +628,7 @@ class SubtileDataset(Dataset):
                         'x':x, 
                         'y':y, 
                         'transform' : t_idx,
-                        'augmented' : aug_count,
+                        'step_shift' : step,
                         }
                     aug_indices.append(idx_dict)
                     augmented_stage_2+=1
@@ -663,6 +637,8 @@ class SubtileDataset(Dataset):
             count_da+=aug_count
             images_da+=1
         self.patches.extend(aug_indices)
+
+        return count_da
 
 
 
@@ -781,6 +757,7 @@ class SubtileDataset(Dataset):
         if return_filename:
             return x, y, f
         return x, y
+
 
 
     def __len__(self):
@@ -1046,7 +1023,7 @@ def train_val_test_stratify(tiles,
         save_yaml(train_set, val_set, test_set, save_to)
     return train_set, val_set, test_set
     
-def count_classes(set_files, num_subtiles, agregate_by = ''):
+def count_classes(set_files, num_subtiles, agregate_by = '', output_latex = False):
     working_dir = os.path.abspath('..')
     pixel_counts = {}
     class_counts = {}
@@ -1078,11 +1055,12 @@ def count_classes(set_files, num_subtiles, agregate_by = ''):
         percent_counts[c] /= total
     percent_counts = {k: f'{100*percent_counts[k]:.2f}' for k in sorted(percent_counts)}
     pixel_counts = {k: pixel_counts[k] for k in sorted(pixel_counts)}
-    print(total)
     #print(' & '.join([str(pc) for pc in pixel_counts.values()]))
-    print(' & '.join([pc+'\%' for pc in percent_counts.values()]))
-
-
+    if output_latex:
+        print(' & '.join([pc+'\%' for pc in percent_counts.values()]))
+    else:
+        print(', '.join([f'{classe}: {pc}%' for classe, pc in zip(['Classe 0', 'Classe 1', 'Classe 2', 'Classe 3', 'Classe 4'],percent_counts.values())]))
+        print('----------------------')
 
 def unique_counts(labels):
     class_count_dict, counts = np.unique(labels, return_counts=True)
@@ -1144,26 +1122,7 @@ def compute_pca_from_dataloader(dataloader, num_channels=12, num_components=3, b
     return torch.tensor(pca_components, dtype=torch.float32)
 
 
-def apply_pca_weights_(images: torch.Tensor, pca_weights: str|torch.Tensor):
-    """
-    Applies PCA transformation to reduce channels from 12 to 3.
 
-    Args:
-        images (torch.Tensor): Input tensor [B, 12, W, H]
-        pca_weights (str or torch.Tensor): Path to saved weights or a tensor.
-
-    Returns:
-        torch.Tensor: Transformed tensor [B, 3, W, H]
-    """
-    if isinstance(pca_weights, str):  # If a file path, load weights
-        pca_weights = torch.tensor(np.load(pca_weights), dtype=torch.float32)
-
-    assert images.shape[1] == pca_weights.shape[1], "Input channels must match PCA weight size"
-
-    return torch.einsum("bchw,jc->bjhw", images, pca_weights)  # [B, 3, W, H]
-
-import numpy as np
-import torch
 
 def apply_pca_weights(images: torch.Tensor|np.ndarray, pca_weights: str | torch.Tensor):
     """
@@ -1196,19 +1155,19 @@ def apply_pca_weights(images: torch.Tensor|np.ndarray, pca_weights: str | torch.
     # Determine if the input is batched or not.
     batched = (images.ndim == 4)  # expects [B, 12, W, H]
     if not batched:
-        # Expecting shape [12, W, H]. Add a batch dimension.
+        # Expecting shape [12, W, H]. Add a batch dimension.-> [1, 12, W, H]
         images = images.unsqueeze(0)
     
     # Check that the channel dimension of the images (index 1) matches pca_weights' channel dimension.
     # Assume pca_weights shape is [3, 12] (i.e. mapping from 12 channels to 3 channels).
-    assert images.shape[1] == pca_weights.shape[1], \
-        f"Input channels ({images.shape[1]}) must match PCA weight size ({pca_weights.shape[1]})"
+    assert images.shape[1] == pca_weights.shape[0], \
+        f"Input channels ({images.shape[1]}) must match PCA weight size ({pca_weights.shape[0]})"
     
     # Apply PCA transformation using einsum.
     # This computes a weighted sum over the 12 channels for each batch element.
     # "bchw,jc->bjhw" means:
     #   b: batch, c: channels, h: height, w: width, j: output channel index, c: input channel
-    transformed = torch.einsum("bchw,jc->bjhw", images.float(), pca_weights)
+    transformed = torch.einsum("bchw,jc->bjhw", images.float(), pca_weights.T)
     
     # If the input was not batched, remove the batch dimension.
     if not batched:

@@ -427,3 +427,494 @@ def plot_masked_image(mask, label_map, image=None, title="Mask Overlay", ax=None
     
     return ax
 
+def plot_masks(masks):
+
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 7, rows * 7))  # Adjust figure size
+    axes = axes.flatten()  # Flatten for easy iteration
+
+
+    class_colors = {
+        0: "#000000",  # Black (Background)
+        1: "#0000FF",  # Cyan
+        2: "#FF00FF",  # Magenta
+        3: "#FFFF00",  # Yellow
+        4: "#FFFFFF"   # White
+    }
+
+    cmap = mcolors.ListedColormap([class_colors[i] for i in sorted(class_colors.keys())])
+    bounds = sorted(class_colors.keys()) + [max(class_colors.keys()) + 1]
+    norm = mcolors.BoundaryNorm(bounds, cmap.N)
+
+
+def plot_mask_list(masks, titles = None, save_to = None):
+    
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as patches
+    import matplotlib.colors as mcolors
+
+    cols = min(3, math.floor(math.sqrt(len(masks))))
+    
+    rows = math.ceil(len(masks)/cols)
+    
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 7, rows * 7))  # Adjust figure size
+    axes = axes.flatten()  # Flatten for easy iteration
+
+
+    class_colors = {
+        0: "#000000",  # Black (Background)
+        1: "#0000FF",  # Cyan
+        2: "#FF00FF",  # Magenta
+        3: "#FFFF00",  # Yellow
+        4: "#FFFFFF"   # White
+    }
+
+    cmap = mcolors.ListedColormap([class_colors[i] for i in sorted(class_colors.keys())])
+    bounds = sorted(class_colors.keys()) + [max(class_colors.keys()) + 1]
+    norm = mcolors.BoundaryNorm(bounds, cmap.N)
+    
+
+    for i, (ax, mask) in enumerate(zip(axes,masks)):
+        im = ax.imshow(mask, cmap=cmap, extent=[0, mask.shape[1], mask.shape[0], 0], alpha=1)
+        
+        if titles is not None:
+            ax.title(titles[i])
+
+    class_labels = {
+            0: "Fundo",
+            1: "Loteamento vazio",
+            2: "Outros equipamentos",
+            3: "Vazio intraurbano",
+            4: "Área Urbanizada"
+        }
+
+    legend_patches = [
+    patches.Patch(facecolor=class_colors[val], edgecolor="black", linewidth=1, label=class_labels[val])
+        for val in class_colors.keys()
+    ]
+    legend_patches = [patches.Patch(color=class_colors[val], label=class_labels[val]) for val in class_colors.keys()]
+    fig.legend(handles=legend_patches, loc="upper right", title="Classes")
+    # Assign class labels if provided
+    
+    plt.tight_layout()#rect=[0, 0, 0.85, 1])  # Adjust layout to fit colorbar
+    if save_to:
+        plt.savefig(save_to, dpi=300, bbox_inches="tight")
+    plt.show()
+
+
+def plot_horizontal(values, names, metric_name, set = "Treinamento", save_to = None):
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    # Bar chart settings
+    y = np.arange(len(names))  # Positions for groups
+    height = 0.15  # Bar height
+
+    fig, ax = plt.subplots(figsize=(12, 16))
+
+    # Plot bars for each key
+    ax.grid(axis="x", linestyle="--", linewidth=0.7, alpha=0.7)
+    keys = [f'{metric_name} C{i}' for i in range(5)]
+    for i, key in enumerate(keys):
+        ax.barh(y + i * height, [100*v[i] for v in values], height, label=key)
+    for pos in y[:-1]:  # Avoid last position
+        ax.axhline(pos + height * len(keys), color="gray", linestyle="--", alpha=0.5)
+
+    # Format plot
+    ax.set_yticks(y + height)  # Center labels
+    model_names = [n.replace("-type", "").replace(".pth", "") for n in names]
+    ax.set_yticklabels(model_names)
+    ax.grid(axis="x", linestyle="--", linewidth=0.7, alpha=0.7)
+    ax.set_xticks(np.arange(0, 101, 5))  # Ticks from 0 to 1 with step 0.1
+
+    #ax.grid(axis="x", which="minor", linestyle=":", linewidth=0.5)  # Dotted minor grid
+
+    ax.legend(title=f"Classes")
+    ax.set_xlabel("Percentual")
+    ax.set_title(f"{metric_name} {set}")
+    #ax.set_yticklabels(ax.get_ytickslabels(), rotation=45)  # Rotate labels by 45 degrees
+    plt.tight_layout()#rect=[0, 0, 0.85, 1])  # Adjust layout to fit colorbar
+
+    if save_to:
+        plt.savefig(save_to, dpi=300, bbox_inches="tight")
+
+    plt.show()
+
+def plot_vertical(values, names, metric_name, set="Treinamento", save_to=None):
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    # Bar chart settings
+    x = np.arange(len(names))  # Positions for groups
+    width = 0.15  # Bar width
+
+    # Split data into two rows for better visualization
+    half = len(names) // 2
+    names_row1, names_row2 = names[:half], names[half:]
+    values_row1, values_row2 = values[:half], values[half:]
+
+    # Create subplots with 2 rows and 1 column
+    fig, axes = plt.subplots(2, 1, figsize=(12, 18), sharex=False)
+
+    # Plot bars for each row
+    keys = [f'{metric_name} C{i}' for i in range(5)]
+    for ax, names_row, values_row in zip(axes, [names_row1, names_row2], [values_row1, values_row2]):
+        x_row = np.arange(len(names_row))  # Recalculate positions for the current row
+        for i, key in enumerate(keys):
+            ax.bar(x_row + i * width, [100 * v[i] for v in values_row], width, label=key)
+        for pos in x_row[:-1]:  # Avoid last position
+            ax.axvline(pos + width * len(keys), color="gray", linestyle="--", alpha=0.5)
+
+        # Format plot
+        ax.set_xticks(x_row + width * (len(keys) - 1) / 2)  # Center labels
+        model_names = [n.replace("-type", "").replace(".pth", "") for n in names_row]
+        ax.set_xticklabels(model_names, rotation=45, ha="right")
+        ax.set_yticks(np.arange(0, 101, 5))  # Ticks from 0 to 1 with step 0.1
+        ax.grid(axis="y", linestyle="--", linewidth=0.7, alpha=0.7)
+        ax.set_ylabel("Percentual")
+        #ax.set_title(f"{metric_name} {set} - Parte {list(axes).index(ax) + 1}")
+
+    # Add legend to the first subplot
+    axes[0].legend(title="Classes", loc="upper right")
+
+    # Adjust layout
+    plt.tight_layout()
+
+    # Save figure if save_to is provided
+    if save_to:
+        plt.savefig(save_to, dpi=300, bbox_inches="tight")
+
+    plt.show()
+
+def plot_horizontal_metric_combination(infos, names, keys, metric_names = None, save_to = None):
+
+    import numpy as np
+    import matplotlib.pyplot as plt
+    values = [[infos[name][k] for k in keys] for name in names]  # Data for each group
+
+    # Bar chart settings
+    y = np.arange(len(names))  # Positions for groups
+    height = 0.15  # Bar width
+
+    fig, ax = plt.subplots(figsize=(12, 16)) 
+    # Plot bars for each key
+    for i, key in enumerate(keys):
+        if not metric_names:
+            ax.barh(y + i * height, [100*v[i] for v in values], height, label=key)
+        else:
+            ax.barh(y + i * height, [100*v[i] for v in values], height, label=metric_names[i])
+            
+    for pos in y[:-1]:  # Avoid last position
+        ax.axhline(pos + height * len(keys), color="gray", linestyle="--", alpha=0.5)
+    # Format plot
+    ax.set_yticks(y + height)  # Center labels
+    model_names = [n.replace("-type", "").replace(".pth", "") for n in names]
+    ax.set_yticklabels(model_names)
+    ax.grid(axis="x", linestyle="--", linewidth=0.7, alpha=0.7)
+    ax.set_xticks(np.arange(0, 101, 5))  # Ticks from 0 to 1 with step 0.1
+    ax.legend(title="Metricas")
+    ax.set_xlabel("Percentual")
+    ax.set_title("Métricas")
+    #ax.set_xticklabels(ax.get_xticks(), rotation=45)  # Rotate labels by 45 degrees
+    #ax.set_yticklabels(ax.get_ytickslabels(), rotation=45)  # Rotate labels by 45 degrees
+    plt.tight_layout()#rect=[0, 0, 0.85, 1])  # Adjust layout to fit colorbar
+
+    if save_to:
+        plt.savefig(save_to, dpi=300, bbox_inches="tight")
+    plt.show()
+
+def plot_vertical_metric_combination(infos, names, keys, metric_names=None, save_to=None):
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    # Extract data for each group
+    values = [[infos[name][k] for k in keys] for name in names]
+
+    # Split data into two rows for better visualization
+    half = len(names) // 2
+    names_row1, names_row2 = names[:half], names[half:]
+    values_row1, values_row2 = values[:half], values[half:]
+
+    # Bar chart settings
+    width = 0.15  # Bar width
+
+    # Create subplots with 2 rows and 1 column
+    fig, axes = plt.subplots(2, 1, figsize=(14, 10), sharex=False)
+
+    # Plot bars for each row
+    for ax, names_row, values_row in zip(axes, [names_row1, names_row2], [values_row1, values_row2]):
+        x = np.arange(len(names_row))  # Positions for groups
+        for i, key in enumerate(keys):
+            if not metric_names:
+                ax.bar(x + i * width, [100 * v[i] for v in values_row], width, label=key)
+            else:
+                ax.bar(x + i * width, [100 * v[i] for v in values_row], width, label=metric_names[i])
+
+        # Add vertical lines to separate groups
+        for pos in x[:-1]:  # Avoid last position
+            ax.axvline(pos + width * len(keys), color="gray", linestyle="--", alpha=0.5)
+
+        # Format plot
+        ax.set_xticks(x + width * (len(keys) - 1) / 2)  # Center labels
+        model_names = [n.replace("-type", "").replace(".pth", "") for n in names_row]
+        ax.set_xticklabels(model_names, rotation=45, ha="right")
+        ax.grid(axis="y", linestyle="--", linewidth=0.7, alpha=0.7)
+        ax.set_ylabel("Percentual")
+        ax.set_title(f"Métricas - Parte {list(axes).index(ax) + 1}")
+
+    # Add legend to the first subplot
+    axes[0].legend(title="Métricas", loc="upper right")
+
+    # Adjust layout
+    plt.tight_layout()
+
+    # Save figure if save_to is provided
+    if save_to:
+        plt.savefig(save_to, dpi=300, bbox_inches="tight")
+
+    plt.show()
+
+def plot_vertical_metric_combination_by_suffix(infos, names, keys, suffixes, metric_names=None, save_to=None):
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    # Extract data for each group
+    values = [[infos[name][k] for k in keys] for name in names]
+
+    # Group names and values by suffix
+    grouped_names = {}
+    grouped_values = {}
+    for name, value in zip(names, values):
+        for suffix in suffixes:
+            if name.endswith(suffix):
+                if suffix not in grouped_names:
+                    grouped_names[suffix] = []
+                    grouped_values[suffix] = []
+                grouped_names[suffix].append(name)
+                grouped_values[suffix].append(value)
+                break  # Stop checking other suffixes once a match is found
+
+    # Bar chart settings
+    width = 0.15  # Bar width
+
+    # Create subplots with one row per suffix
+    num_rows = len(grouped_names)
+    fig, axes = plt.subplots(num_rows, 1, figsize=(14, 5 * num_rows), sharex=True)
+
+    # Handle the case where there's only one row (axes is not iterable in this case)
+    if num_rows == 1:
+        axes = [axes]
+
+    # Plot bars for each suffix group
+    for ax, suffix in zip(axes, grouped_names.keys()):
+        names_row = grouped_names[suffix]
+        values_row = grouped_values[suffix]
+        x = np.arange(len(names_row))  # Positions for groups
+
+        for i, key in enumerate(keys):
+            if not metric_names:
+                ax.bar(x + i * width, [100 * v[i] for v in values_row], width, label=key)
+            else:
+                ax.bar(x + i * width, [100 * v[i] for v in values_row], width, label=metric_names[i])
+
+        # Add vertical lines to separate groups
+        for pos in x[:-1]:  # Avoid last position
+            ax.axvline(pos + width * len(keys), color="gray", linestyle="--", alpha=0.5)
+
+        # Format plot
+        ax.set_xticks(x + width * (len(keys) - 1) / 2)  # Center labels
+        model_names = [n.replace("-type", "").replace(".pth", "") for n in names_row]
+        ax.set_xticklabels(model_names, rotation=45, ha="right")
+        ax.grid(axis="y", linestyle="--", linewidth=0.7, alpha=0.7)
+        ax.set_yticks(np.arange(0, 101, 10))  # Ticks from 0 to 1 with step 0.1
+        ax.set_ylabel("Percentual")
+        ax.set_title(f"'{suffix.replace('-type','').replace('.pth','')}'")
+
+    # Add legend to the first subplot
+    axes[0].legend(title="Métricas", loc="upper right")
+
+    # Adjust layout
+    plt.tight_layout()
+
+    # Save figure if save_to is provided
+    if save_to:
+        plt.savefig(save_to, dpi=300, bbox_inches="tight")
+
+    plt.show()
+
+
+def plot_metric(values, names, suffixes, metric_name=None, save_to=None):
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    # Step 1: Calculate unique prefixes by removing suffixes
+    prefixes = set()
+    for name in names:
+        for suffix in suffixes:
+            if name.endswith(suffix):
+                prefix = name[: -len(suffix)]  # Remove the suffix to get the prefix
+                prefixes.add(prefix)
+                break  # Stop checking other suffixes once a match is found
+
+    prefixes = sorted(prefixes)  # Sort prefixes for consistent ordering
+
+    # Step 2: Group names and values by suffix and prefix
+    grouped_names = {suffix: {prefix: [] for prefix in prefixes} for suffix in suffixes}
+    grouped_values = {suffix: {prefix: [] for prefix in prefixes} for suffix in suffixes}
+
+    # Populate the dictionaries based on suffixes and prefixes
+    for name, value in zip(names, values):
+        for suffix in suffixes:
+            if name.endswith(suffix):
+                prefix = name[: -len(suffix)]  # Remove the suffix to get the prefix
+                grouped_names[suffix][prefix].append(name)
+                grouped_values[suffix][prefix].append(value)
+                break  # Stop checking other suffixes once a match is found
+
+    # Bar chart settings
+    width = 0.15  # Bar width
+
+    # Create subplots with one row per suffix
+    num_rows = len(suffixes)
+    fig, axes = plt.subplots(num_rows, 1, figsize=(10, 4 * num_rows), sharex=True)
+
+    # Handle the case where there's only one row (axes is not iterable in this case)
+    if num_rows == 1:
+        axes = [axes]
+
+    keys = [f'{metric_name} C{i}' for i in range(5)]
+
+    # Plot bars for each suffix group
+    for ax, suffix in zip(axes, suffixes):
+        # Flatten the names and values for plotting, ensuring consistent prefix order
+        names_row = []
+        values_row = []
+
+        for prefix in prefixes:
+            if grouped_names[suffix][prefix]:  # If there are names for this prefix
+                names_row.extend(grouped_names[suffix][prefix])
+                values_row.extend(grouped_values[suffix][prefix])
+            else:  # If no names for this prefix, add placeholders
+                names_row.append("")  # Placeholder for missing prefix
+                values_row.append([0] * len(keys))  # Placeholder for missing values
+        print(names_row)
+        x = np.arange(len(names_row))  # Positions for groups
+
+        for i, key in enumerate(keys):
+            ax.bar(x + i * width, [100 * v[i] for v in values_row], width, label=key)
+            
+        # Add vertical lines to separate groups
+        for pos in x[:-1]:  # Avoid last position
+            ax.axvline(pos + width * len(keys), color="gray", linestyle="--", alpha=0.5)
+
+        # Format plot
+        ax.set_xticks(x + width * (len(keys) - 1) / 2)  # Center labels
+        model_names = [n.replace("-type", "").replace(".pth", "").replace(suffix, "") if n else "" for n in names_row]
+        ax.set_xticklabels(model_names, rotation=45, ha="right")
+        ax.set_yticks(np.arange(0, 101, 10))  # Ticks from 0 to 1 with step 0.1
+        ax.grid(axis="y", linestyle="--", linewidth=0.7, alpha=0.7)
+        ax.set_ylabel("Percentual")
+        ax.set_title(f"Configuração: '{suffix.replace('-type-', '').replace('.pth', '')}'")
+
+    # Add legend to the first subplot
+    axes[0].legend(title="Métricas", loc="lower left", framealpha=0.5)
+
+    # Adjust layout
+    plt.tight_layout()
+
+    # Save figure if save_to is provided
+    if save_to:
+        plt.savefig(save_to, dpi=300, bbox_inches="tight")
+        print('saved to ', save_to)
+    plt.show()
+
+
+
+
+def plot_metric_combination(infos, names, keys, suffixes, metric_names=None, save_to=None):
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    # Extract data for each group
+    values = [[infos[name][k] for k in keys] for name in names]
+
+    # Step 1: Calculate unique prefixes by removing suffixes
+    prefixes = set()
+    for name in names:
+        for suffix in suffixes:
+            if name.endswith(suffix):
+                prefix = name[: -len(suffix)]  # Remove the suffix to get the prefix
+                prefixes.add(prefix)
+                break  # Stop checking other suffixes once a match is found
+
+    prefixes = sorted(prefixes)  # Sort prefixes for consistent ordering
+
+    # Step 2: Group names and values by suffix and prefix
+    grouped_names = {suffix: {prefix: [] for prefix in prefixes} for suffix in suffixes}
+    grouped_values = {suffix: {prefix: [] for prefix in prefixes} for suffix in suffixes}
+
+    # Populate the dictionaries based on suffixes and prefixes
+    for name, value in zip(names, values):
+        for suffix in suffixes:
+            if name.endswith(suffix):
+                prefix = name[: -len(suffix)]  # Remove the suffix to get the prefix
+                grouped_names[suffix][prefix].append(name)
+                grouped_values[suffix][prefix].append(value)
+                break  # Stop checking other suffixes once a match is found
+
+    # Bar chart settings
+    width = 0.15  # Bar width
+
+    # Create subplots with one row per suffix
+    num_rows = len(suffixes)
+    fig, axes = plt.subplots(num_rows, 1, figsize=(10, 4 * num_rows), sharex=True)
+
+    # Handle the case where there's only one row (axes is not iterable in this case)
+    if num_rows == 1:
+        axes = [axes]
+
+    # Plot bars for each suffix group
+    for ax, suffix in zip(axes, suffixes):
+        # Flatten the names and values for plotting, ensuring consistent prefix order
+        names_row = []
+        values_row = []
+
+        for prefix in prefixes:
+            if grouped_names[suffix][prefix]:  # If there are names for this prefix
+                names_row.extend(grouped_names[suffix][prefix])
+                values_row.extend(grouped_values[suffix][prefix])
+            else:  # If no names for this prefix, add placeholders
+                names_row.append("")  # Placeholder for missing prefix
+                values_row.append([0] * len(keys))  # Placeholder for missing values
+        print(names_row)
+        x = np.arange(len(names_row))  # Positions for groups
+
+        for i, key in enumerate(keys):
+            if not metric_names:
+                ax.bar(x + i * width, [100 * v[i] for v in values_row], width, label=key)
+            else:
+                ax.bar(x + i * width, [100 * v[i] for v in values_row], width, label=metric_names[i])
+
+        # Add vertical lines to separate groups
+        for pos in x[:-1]:  # Avoid last position
+            ax.axvline(pos + width * len(keys), color="gray", linestyle="--", alpha=0.5)
+
+        # Format plot
+        ax.set_xticks(x + width * (len(keys) - 1) / 2)  # Center labels
+        model_names = [n.replace("-type", "").replace(".pth", "").replace(suffix, "") if n else "" for n in names_row]
+        ax.set_xticklabels(model_names, rotation=45, ha="right")
+        ax.set_yticks(np.arange(0, 101, 10))  # Ticks from 0 to 1 with step 0.1
+        ax.grid(axis="y", linestyle="--", linewidth=0.7, alpha=0.7)
+        ax.set_ylabel("Percentual")
+        ax.set_title(f"Configuração: '{suffix.replace('-type-', '').replace('.pth', '')}'")
+
+    # Add legend to the first subplot
+    axes[0].legend(title="Métricas", loc="lower left", framealpha=0.5)
+
+    # Adjust layout
+    plt.tight_layout()
+
+    # Save figure if save_to is provided
+    if save_to:
+        plt.savefig(save_to, dpi=300, bbox_inches="tight")
+
+    plt.show()

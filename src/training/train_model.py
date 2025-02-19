@@ -41,125 +41,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class CombinedLoss_(nn.Module):
-    def __init__(self, weights = None, loss_mode = 'CE', return_all_losses = False):#, groupings):
-        """
-        Initialize the combined loss function.
-
-        Parameters:
-        alpha (float): Weighting factor for combining Cross-Entropy and Dice Loss.
-                       alpha * CrossEntropyLoss + (1 - alpha) * DiceLoss
-        """
-        super(CombinedLoss, self).__init__()
-        self.weights = weights
-        self.loss_mode = loss_mode
-        self.return_all_losses = return_all_losses
-        if loss_mode=='CE':
-            self.alpha = 1.0
-        if loss_mode=='dice':
-            self.alpha = 0.0
-        if loss_mode=='CE-dice':
-            self.alpha = 0.5
-        if loss_mode=='groups':
-            self.groupings = {
-                "5-group": {
-                    0: [0],      # Group 1: Class 1 + 4
-                    1: [1],      # Group 2: Class 2
-                    2: [2],      # Group 3: Class 3
-                    3: [3],       # Group 4: Class 5
-                    4: [4]       # Group 4: Class 5
-                },
-
-                "4-group": {
-                    0: [0, 3],   # Group 1: Class 1 + 4
-                    1: [1],      # Group 2: Class 2
-                    2: [2],      # Group 3: Class 3
-                    3: [4]       # Group 4: Class 5
-                },
-                "3-group": {
-                    0: [0, 3],   # Group 1: Class 1 + 4
-                    1: [1, 2],   # Group 2: Class 2 + 3
-                    2: [4]       # Group 3: Class 5
-                },
-                "2-group": {
-                    0: [0, 3],   # Group 1: Class 1 + 4
-                    1: [1, 2, 4],   # Group 2: Class 2 + 3
-                },
-            }
-        
-    def set_return(self, return_CE_and_dice):
-        self.return_CE_and_dice = return_CE_and_dice
-
-    def forward(self, y_pred, y_true):
-        """
-        Compute the combined loss.
-
-        Parameters:
-        y_pred (torch.Tensor): Predicted logits, shape (N, C, ...).
-        y_true (torch.Tensor): Ground truth labels, shape (N, ...).
-
-        Returns:
-        torch.Tensor: The combined loss value.
-        """
-
-        # Ensure y_true is 3D (N, H, W)
-        if y_true.dim() == 4:  # If y_true is (N, 1, H, W)
-            y_true = y_true.squeeze(1)  # Remove the extra dimension
-        elif y_true.dim() != 3:  # If y_true is not 3D
-            raise RuntimeError(f"y_true must be 3D (N, H, W) or 4D (N, 1, H, W). Got shape: {y_true.shape}")
-        # Cross-Entropy Loss
-        #print(y_true.shape)
-        #print(y_pred.shape)
-        #focalloss = focal_loss(y_pred, y_true, weights=self.weights)
-        #ce_loss = focalloss
-        ce_loss = F.cross_entropy(y_pred, y_true, weight=self.weights)
-
-        # Dice Loss
-        dice_loss = self.multiclass_dice_loss(y_pred, y_true)
-
-        # Combine the losses
-        combined_loss = self.alpha * ce_loss + (1 - self.alpha) * dice_loss
-        if self.return_CE_and_dice:
-            return combined_loss, ce_loss, dice_loss
-        else: 
-            return combined_loss
-
-    def multiclass_dice_loss(self, y_pred, y_true):
-        """
-        Compute the multiclass Dice Loss.
-
-        Parameters:
-        y_pred (torch.Tensor): Predicted logits, shape (N, C, H, W).
-        y_true (torch.Tensor): Ground truth labels, shape (N, H, W) or (N, 1, H, W).
-
-        Returns:
-        torch.Tensor: The Dice Loss value.
-        """        
-
-        # Ensure y_true contains valid class indices
-        if y_true.min() < 0 or y_true.max() >= y_pred.size(1):
-            raise RuntimeError(f"y_true contains invalid class indices. Expected values in [0, {y_pred.size(1) - 1}].")
-
-        # Convert y_true to one-hot encoding
-        num_classes = y_pred.size(1)
-        y_true_one_hot = F.one_hot(y_true, num_classes).permute(0, 3, 1, 2).float()  # Shape: (N, C, H, W)
-
-        # Apply softmax to y_pred to get probabilities
-        y_pred_softmax = F.softmax(y_pred, dim=1) #sigmoid?
-
-        # Compute intersection and union
-        intersection = torch.sum(y_pred_softmax * y_true_one_hot, dim=(2, 3))  # Sum over spatial dimensions
-        union = torch.sum(y_pred_softmax + y_true_one_hot, dim=(2, 3))
-
-        # Compute Dice coefficient
-        dice = (2.0 * intersection + 1e-6) / (union + 1e-6)  # Add epsilon to avoid division by zero
-
-        # Compute Dice Loss
-        dice_loss = 1.0 - dice.mean()  # Average over classes and batch
-
-        return dice_loss
-
-
 class CombinedLoss(nn.Module):
     def __init__(self, loss_mode = 'CE', weights = None , return_all_losses = False):#, groupings):
         """
@@ -495,7 +376,13 @@ def update_lr(model, train_loader, val_loader, optimizer, criterion, num_iter=10
                          num_iter=num_iter, 
                          step_mode="exp")
     
-    ax, best_lr = lr_finder.plot(suggest_lr = True) 
+    try:
+        ax, best_lr = lr_finder.plot(suggest_lr = True) 
+    except Exception as e:
+        best_lr = end_lr
+        print(f"Error finding learning rate: {e}")
+        print("Using start_lr=", start_lr)
+
     print('Chosen LR: ', best_lr)
     lr_finder.reset() #reset model and optimizer before calling lr_finder
     criterion.set_return(return_all_losses=True)
@@ -689,9 +576,10 @@ def train_model(model, train_loader, val_loader, loss_mode, device, num_classes,
             model.load_state_dict(best_model_state)
             optimizer.load_state_dict(best_optimizer_state)
             start_lr = max(minimum_lr, current_lr/100)
-            end_lr = min(maximum_lr, current_lr)            
+            end_lr = min(maximum_lr, current_lr)
             current_lr = update_lr(model, train_loader, val_loader, optimizer, criterion, 
                                    start_lr=start_lr, end_lr=end_lr, num_iter=50)
+
             current_patience = 0
 
         ### ---------------- SAVING CHECKPOINT --------------        
