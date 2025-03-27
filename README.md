@@ -8,8 +8,7 @@ Aqui, o objetivo é utilizar modelos convolucionais de Deep Learning para a segm
 
 - [Estrutura](#project-structure)
 - [Setup](#setup)
-- [Usage](#usage)
-- [License](#license)
+- [Uso](#usage)
 
 ## Estrutura de arquivos
 
@@ -94,7 +93,16 @@ source venv/bin/activate  # On Windows use `venv\Scripts\activate`
 pip install -r requirements.txt
 ```
 
-### 4. Adjuste os sys.path nos Notebooks
+### 4. Baixe e deszipe os arquivos shapefile de máscaras das áreas urbanizadas
+
+https://www.ibge.gov.br/geociencias/cartas-e-mapas/redes-geograficas/15789-areas-urbanizadas.html?=&t=downloads
+
+O arquivo deve ficar neste caminho:
+
+/data/masks/AreasUrbanizadas2019_Brasil/AU_2022_AreasUrbanizadas2019_Brasil.shp
+
+
+### 5. Adjuste os sys.path nos Notebooks
 Nos notebooks, inclua a raiz do projeto  ao sys.path para fazer os imports:
 
 ```python
@@ -103,4 +111,14 @@ import sys
 sys.path.append(os.path.abspath('..'))
 ```
 
+## Uso
 
+### 1. Excecução do pipeline completo (MVP)
+```bash
+python -m src.pipeline.full_mvp_pipeline
+```
+
+### 2. Gera predições de tiles
+```bash
+python -m src.pipeline.tile_assembly_pipeline ./data/config/presets/tile_assembly_preset1.txt
+```
