@@ -121,7 +121,7 @@ def pipeline(config_file=None):
         if apply_cleaning:
             print('Limpeza')
             tile.post_process_tile()
-            tile.save_cleaning(working_dir=working_dir, folder_name = model_name.model_name.replace('.pth', ''))
+            tile.save_cleaning(working_dir=working_dir, folder_name = model_name.replace('.pth', ''))
             del tile
             import gc
             gc.collect()

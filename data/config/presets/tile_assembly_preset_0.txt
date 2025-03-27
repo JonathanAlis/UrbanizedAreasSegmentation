@@ -1,9 +1,9 @@
 # Parâmetros para o preprocessamento dos dados
 
 #Modelo: qual o modelo utilizar. Tem que estar salvo em /models(ou /models/finetune), e indicar o nome completo do modelo
-# Ex: UNetSmall-256-4types-DS-CEW-4ch-4tt
+# Ex: UNetSmall-256-4types-DS-CEW-4ch-1tt
 
-model = UNetSmall-256-4types-DS-CEW-4ch-4tt
+model = UNetSmall-256-4types-DS-CEW-4ch-1tt
 
 # apply_cleaning: Se deve-se aplicar a limpeza de predição 
 # Caso positivo, vai se aplicar e salvar em pasta separada CRF e morphing

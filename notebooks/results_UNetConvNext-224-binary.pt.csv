@@ -1,5 +1,0 @@
-Model,Epoch,Loss method,Train Loss,Val Loss,Val Accuracy,Val Micro F1,Val Macro F1,Val Weighted F1,Val C0,Val C1,Status,Model path
-UNetConvNext-224-binary.pt,1,BCE-dice,0.223,0.229,97.98,97.98,91.49,97.97,98.92,84.05, current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/UNetConvNext-224-binary.pth
-UNetConvNext-224-binary.pt,2,BCE-dice,0.213,0.229,98.03,98.03,91.65,98.02,98.95,84.35, current best val loss.,/home/jonathan/UrbanizedAreasSegmentation/models/UNetConvNext-224-binary.pth
-UNetConvNext-224-binary.pt,3,BCE-dice,0.208,0.235,97.93,97.93,91.15,97.91,98.90,83.41,,/home/jonathan/UrbanizedAreasSegmentation/models/UNetConvNext-224-binary.pth
-UNetConvNext-224-binary.pt,4,BCE-dice,0.204,0.232,98.06,98.06,91.72,98.04,98.96,84.47,,/home/jonathan/UrbanizedAreasSegmentation/models/UNetConvNext-224-binary.pth

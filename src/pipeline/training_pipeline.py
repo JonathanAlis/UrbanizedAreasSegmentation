@@ -53,18 +53,22 @@ def pipeline(config_file=None):
     models = ast.literal_eval(params['models'])
     loss = params['loss']
     weighted_loss = params['weighted_loss'].lower() == 'true'
+
     for model in models:
         model_name = model
+        
         if dynamic_sampling:
+            print(model_name)
             model_name+='-DS'
+            print(model_name)
         if data_augmentation:
             model_name+='-DA'
-        model_name = model+f'-{loss}'
+        model_name = model_name+f'-{loss}'
         if weighted_loss:
             model_name+='W'
         model_name+=f"-{num_channels}ch" #nof channels
         model_name+=f"-{num_tiles}tt" #nof train tiles
-            
+
         print('--------------------')
         print('Training', model_name)
         # define quais indices
@@ -99,7 +103,7 @@ def pipeline(config_file=None):
             print(f'Modelo {model_name} não está no param grid. Pulando...')
             continue
 
-
+        print(model_name, '############################')
         train.train_model(model, 
                             train_loader, 
                             val_loader, 
