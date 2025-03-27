@@ -81,56 +81,6 @@ class HRNetSegmentation(nn.Module):
         output = self.output_layer(self.last_up(features[0]))
         return output
 
-class HRNetSegmentation_(nn.Module):
-    def __init__(self, in_channels, num_classes, backbone='hrnet_w18', pretrained=True, debug=False):
-        super(HRNetSegmentation, self).__init__()
-        
-        # Load the HRNet backbone
-        self.backbone = timm.create_model(backbone, features_only=True, pretrained=pretrained)
-        
-        if in_channels != 3:
-            self.backbone.conv1 = nn.Conv2d(
-                in_channels,
-                self.backbone.conv1.out_channels,
-                kernel_size=self.backbone.conv1.kernel_size,
-                stride=self.backbone.conv1.stride,
-                padding=self.backbone.conv1.padding,
-                bias=self.backbone.conv1.bias is not None,
-            )
-        # Get the number of output channels from the backbone
-        self.channels = self.backbone.feature_info.channels()
-        
-        # Transposed convolution layers for upsampling and feature fusion
-        self.up1 = nn.ConvTranspose2d(self.channels[-1], self.channels[-2], kernel_size=4, stride=2, padding=1)
-        self.up2 = nn.ConvTranspose2d(self.channels[-2], self.channels[-3], kernel_size=4, stride=2, padding=1)
-        self.up3 = nn.ConvTranspose2d(self.channels[-3], self.channels[-4], kernel_size=4, stride=2, padding=1)
-        self.up4 = nn.ConvTranspose2d(self.channels[-4], self.channels[-5], kernel_size=4, stride=2, padding=1)
-        self.up5 = nn.ConvTranspose2d(self.channels[-5], self.channels[-5], kernel_size=4, stride=2, padding=1)
-        
-        self.conv1 = ConvBlock(self.channels[-2], self.channels[-2])
-        self.conv2 = ConvBlock(self.channels[-3], self.channels[-3])
-        self.conv3 = ConvBlock(self.channels[-4], self.channels[-4])
-        self.conv4 = ConvBlock(self.channels[-5], self.channels[-5])
-        
-        # Final layer to produce segmentation map
-        self.final_conv = ConvBlock(self.channels[-5], num_classes)
-        
-    def forward(self, x):
-        # Extract multi-scale features from HRNet
-        features = self.backbone(x)
-        x = self.up1(features[-1]) + features[-2]
-        x = self.conv1(x)
-        x = self.up2(x) + features[-3]
-        x = self.conv2(x)
-        x = self.up3(x) + features[-4]
-        x = self.conv3(x)
-        x = self.up4(x) + features[-5]
-        x = self.conv4(x)
-        x = self.up5(x)
-        # Final convolution to produce segmentation map
-        x = self.final_conv(x)
-        return x
-
 # Testing
 if __name__ == "__main__":
 
@@ -154,16 +104,3 @@ if __name__ == "__main__":
     input_tensor = torch.randn(16, 12, 512, 512)  # Batch of 2, 3 channels, 512x512 images
     output = model(input_tensor)
     print(f"Output shape: {output.shape}")  # Expected shape: (2, 21, 512, 512)
-    if 0:
-
-        # Example usage
-        model = HRNetSegmentation(in_channels = 12, num_classes=9, backbone="hrnet_w32", pretrained=True)
-        input_tensor = torch.randn(16, 12, 512, 512)  # Batch of 2, 3 channels, 512x512 images
-        output = model(input_tensor)
-        print(f"Output shape: {output.shape}")  # Expected shape: (2, 21, 512, 512)
-
-        # Example usage
-        model = HRNetSegmentation(in_channels = 12, num_classes=9, backbone="hrnet_w48", pretrained=True)
-        input_tensor = torch.randn(16, 12, 512, 512)  # Batch of 2, 3 channels, 512x512 images
-        output = model(input_tensor)
-        print(f"Output shape: {output.shape}")  # Expected shape: (2, 21, 512, 512)

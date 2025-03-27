@@ -1,0 +1,35 @@
+# Parâmetros para baixar dados
+
+# N é o número máximo de data baixadas por tile
+# O padrão é 4. 
+# Outras opções são 1, 2, 3, ..., não recomendamos valores muito altos > 12.
+N = 4 
+
+# threshold é o limiar de cobertura em percentual, 
+# o valor padrão é 98 
+# nao recomendamos usar 100. entre 95 e 99 deve ser ok
+threshold = 98 
+
+# collections é qual a coleção que ai se baixar os dados, o valor padrão é ['S2-16D-2'] , referente ao sentinel
+# nao foi testado quaçquer outro valor, use esse mesmo
+collections = S2-16D-2 
+ 
+# datetime é o período de tempo a se considerar, por padrão de 2019: '2019-01-01/2019-12-31'
+datetime = 2019-01-01/2019-12-31
+
+# save_dir é a o caminho onde vao ser baixados os dados a partir do diretório de trabalho, po rpadrao em data/raw 
+save_dir = data/raw
+
+
+# tiles são os tiles a se baixar, pode ter só o código de 6 digitos, um para cada linha
+
+tiles:
+'Boa Vista': '015002',  
+'Campo Grande': '021027',
+'Macapá': '025005',
+'Curitiba': '027032',
+'Brasília': '028022',                      
+'Rio de Janeiro': '033029',
+'Teresina': '034011',
+'Petrolina': '036016',
+

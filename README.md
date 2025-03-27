@@ -1,20 +1,21 @@
-# Image Segmentation Project
+# Projeto de Segmentação de Áreas Urbanizadas (AU)
 
-This project focuses on image segmentation using machine learning models. The project is structured to be modular, scalable, and maintainable.
+Este o repositório do projeto de segmentação de AU, em colaboração com o IBGE.
+Aqui, o objetivo é utilizar modelos convolucionais de Deep Learning para a segmentação de áreas urbanizadas a partir de imagens de satélite.
+
 
 ## Table of Contents
 
-- [Project Structure](#project-structure)
+- [Estrutura](#project-structure)
 - [Setup](#setup)
 - [Usage](#usage)
-- [Contributing](#contributing)
 - [License](#license)
 
-## Project Structure
+## Estrutura de arquivos
 
-The project is organized as follows:
+O projeto é estruturado da seguinte forma:
 ```
-project_root/
+/
 ├── src/
 │   ├── __init__.py
 │   ├── data_processing/
@@ -27,49 +28,31 @@ project_root/
 │   │   ├── model_training.py
 │   │   ├── model_inference.py
 │   │   └── ...
-│   ├── utils/
+│   ├── training/
 │   │   ├── __init__.py
-│   │   ├── utils.py
+│   │   ├── train_model.py
 │   │   └── ...
-│   └── ...
+│   └── pipeline/
+│       └── ...
 ├── data/
 │   ├── raw/
-│   │   ├── images/
-│   │   └── masks/
+│   │   └── ...
 │   ├── processed/
-│   │   ├── train/
-│   │   │   ├── images/
-│   │   │   └── masks/
-│   │   ├── val/
-│   │   │   ├── images/
-│   │   │   └── masks/
-│   │   └── test/
-│   │       ├── images/
-│   │       └── masks/
-│   └── ...
+│   │   └── ...
+│   └── config
+│   │   └──...
 ├── models/
-│   ├── model_v1/
-│   │   ├── model.h5
+│   ├── unet/
 │   │   └── ...
-│   ├── model_v2/
-│   │   ├── model.h5
-│   │   └── ...
+│   └── hrnet/
+│   
+├── notebooks_produto2/
 │   └── ...
-├── notebooks/
-│   ├── exploratory_data_analysis.ipynb
-│   ├── model_training.ipynb
+├── notebooks_produto3/
 │   └── ...
 ├── configs/
-│   ├── config.yaml
 │   └── ...
-├── logs/
-│   ├── training.log
-│   └── ...
-├── reports/
-│   ├── report.pdf
-│   └── ...
-├── tests/
-│   ├── test_data_processing.py
+├── experimental_results/
 │   └── ...
 ├── requirements.txt
 └── README.md
@@ -77,41 +60,42 @@ project_root/
 ```
 ### Key Directories and Files
 
-- **src/**: Contains all source code organized into subpackages.
-  - **data_processing/**: Handles data downloading and preprocessing.
-  - **models/**: Contains code for model training and inference.
-  - **utils/**: Utility functions used across the project.
-- **data/**: Contains raw and processed data.
-- **saved_models/**: Stores trained models.
-- **notebooks/**: Jupyter notebooks for exploratory data analysis and model training.
-- **tests/**: Unit tests for the project.
-- **requirements.txt**: Lists all project dependencies.
-- **README.md**: Provides an overview of the project and setup instructions.
+- **src/**: Contém os códigos fintes organizados em modulos
+  - **data_processing/**: Aquisição, organização e processamento de dados
+  - **models/**: Modelos UNet e HRNet utilizados para treino e teste
+  - **pipeline/**: Contém os scripts para rodar os módulos básicos, como o download, preparação, treino, etc
+  - **train/**: Scripts de treinamento e pós processamento
+- **data/**: Contém dados brutos e processados.
+- **models/**: Pasta que contém os checkpoints dos modelos salvos
+- **notebooks_produto2/**: Jupyter notebooks contendo os pasos e experimentos explorados no produto 2
+- **notebooks_produto3/**: Jupyter notebooks contendo os pasos e experimentos explorados no produto 3
+- **requirements.txt**: Lista de dependências
+- **README.md**: Este arquivo.
 
 ## Setup
 
-### 1. Clone the Repository
+### 1. Clone o repositório
 
 ```bash
-git clone https://github.com/yourusername/image-segmentation.git
-cd image-segmentation
+git clone https://github.com/JonathanAlis/UrbanizedAreasSegmentation.git
+cd UrbanizedAreasSegmentation
 ```
 
-### 2. Set Up a Virtual Environment
-Using venv (Python 3.3+)
+### 2. Set Up de um Virtual Environment
+Use venv (Python 3.10+)
 
 ```bash
 python -m venv venv
 source venv/bin/activate  # On Windows use `venv\Scripts\activate`
 ```
 
-### 3. Install Dependencies
+### 3. Instalação de dependências
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Adjust sys.path in Notebooks
-In your Jupyter notebooks, add the project root to sys.path to enable absolute imports:
+### 4. Adjuste os sys.path nos Notebooks
+Nos notebooks, inclua a raiz do projeto  ao sys.path para fazer os imports:
 
 ```python
 import os
@@ -119,33 +103,4 @@ import sys
 sys.path.append(os.path.abspath('..'))
 ```
 
-## Usage
-### 1. Data Processing
-To preprocess data, use the data_processing module:
-
-python
-Copy
-from src.data_processing.data_processing import preprocess_image
-
-preprocess_image('path/to/raw/image.png', 'path/to/processed/image.png')
-### 2. Model Training
-To train a model, use the model_training module:
-
-python
-Copy
-from src.models.model_training import train_model
-
-train_model('path/to/processed/data', 'path/to/save/model.h5')
-### 3. Running Scripts
-To run scripts from the command line, use the -m flag:
-
-bash
-Copy
-python -m src.models.model_training
-### 4. Notebooks
-Open and run notebooks in the notebooks/ directory for exploratory data analysis and model training.
-
-
-License
-This project is licensed under the MIT License. See the LICENSE file for details.
 

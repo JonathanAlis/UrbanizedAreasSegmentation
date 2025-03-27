@@ -1,0 +1,38 @@
+# Parâmetros para o preprocessamento dos dados
+
+# O tamanho dos tiles. É fixo para o sentinel2
+tile_size = 10560
+
+# O número de subtiles que o tile vai ser dividido
+# Os produtos foram avaliados com 6 por padrão.
+# Outras opções são 4, 5, 6, 7, 8, 10, 11, 12
+num_subtiles = 6
+
+# quantization_max é o valor máximo que é utilizado para a quantização
+# Foi usado por padrão 5000. Se for -1, não aplica a quantização
+quantization_max = 5000 
+
+# raw_dir é a o caminho onde os dados brutos foram baixados
+raw_dir = data/raw
+
+# save_dir é a o caminho onde vao ser salvos os dados a partir do diretório de trabalho, po padrao em data/processed 
+save_dir = data/processed
+
+
+# channels_to_save é a lista de canais que serão salvos.
+#Opçẽos testadas:
+#['B01', 'B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B09', 'B11', 'B12', 'B8A']
+#['B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B11', 'B12', 'B8A']
+#['B02', 'B03', 'B04', 'B05', 'B06', 'B08', 'B11', 'B12']
+#['B02', 'B03', 'B04', 'B06', 'B08', 'B11']
+#['B02', 'B03', 'B04','B08']
+channels_to_save = ['B02', 'B03', 'B04','B08']
+
+
+# tiles são os tiles a se processar, pode ter só o código de 6 digitos, um para cada linha
+# se estiver vazio, procura por todos os tiles na pasta de dados brutos
+tiles:
+'Belo Horizonte': '032027',
+
+     
+

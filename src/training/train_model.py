@@ -52,10 +52,13 @@ class CombinedLoss(nn.Module):
 
         """
         super(CombinedLoss, self).__init__()
-        self.weights = weights
+        if weights is not None:
+            self.weights = torch.Tensor([w/sum(weights) for w in weights])
+        else:
+            self.weights = None
         self.loss_mode = loss_mode
         self.return_all_losses = return_all_losses
-        assert loss_mode in ['CE', 'dice', 'CE-dice', 'groups']
+        assert loss_mode in ['CE', 'dice', 'CE-dice', 'groups'] or loss_mode.startswith('macroF')
 
         if self.loss_mode=='CE':
             self.alpha = 1.0
@@ -63,6 +66,8 @@ class CombinedLoss(nn.Module):
             self.alpha = 0.0
         if self.loss_mode=='CE-dice':
             self.alpha = 0.5
+        if self.loss_mode=='macroF1':
+            pass
         if self.loss_mode=='groups':
             self.groupings = {
                 "5-group": {
@@ -139,8 +144,18 @@ class CombinedLoss(nn.Module):
         elif y_true.dim() != 3:  # If y_true is not 3D
             raise RuntimeError(f"y_true must be 3D (N, H, W) or 4D (N, 1, H, W). Got shape: {y_true.shape}")
         
+        if self.weights is not None:
+            self.weights = self.weights.to(y_pred.device)
         ce_loss = F.cross_entropy(y_pred, y_true, weight=self.weights)
-
+        dice_loss = self.multiclass_dice_loss(y_pred, y_true)
+            
+        if self.loss_mode.startswith('macroF'):
+            beta = int(self.loss_mode.split('macroF')[1])
+            macroFLoss = self.macro_fbeta_loss(y_pred, y_true, beta = beta)
+            if self.return_all_losses:
+                return macroFLoss, ce_loss, dice_loss
+            else: 
+                return macroFLoss
 
         if self.loss_mode=='groups':
             losses_group = self.group_loss(y_pred, y_true)
@@ -150,7 +165,6 @@ class CombinedLoss(nn.Module):
             else: 
                 return combined_loss
         else:
-            dice_loss = self.multiclass_dice_loss(y_pred, y_true)
             combined_loss = self.alpha * ce_loss + (1 - self.alpha) * dice_loss
             if self.return_all_losses:
                 return combined_loss, ce_loss, dice_loss
@@ -194,6 +208,42 @@ class CombinedLoss(nn.Module):
 
 
 
+    def macro_fbeta_loss(self, pred, target, beta = 2.0, class_weights=None, smooth=1e-6):
+        """
+        Calcula o 1 - Soft Macro F1-score como loss, ponderado por pesos de classe.
+
+        Args:
+            pred: Tensor de probabilidades [batch, num_classes, H, W].
+            target: Tensor de índices de classe [batch, H, W].
+            class_weights: Tensor de pesos [num_classes] ou None para pesos iguais.
+            smooth: Pequeno valor para suavização numérica.
+
+        Returns:
+            Loss baseada no Macro F1-score ponderado.
+        """
+        num_classes = pred.shape[1]
+        
+        # Converter target para one-hot
+        target_one_hot = F.one_hot(target, num_classes=num_classes).permute(0, 3, 1, 2).float()
+        
+        # Softmax para normalizar pred (se ainda não for probabilidades)
+        pred = F.softmax(pred, dim=1)
+        
+        # TP, FP, FN para cada classe
+        tp = (pred * target_one_hot).sum(dim=(0, 2, 3))
+        fp = ((1 - target_one_hot) * pred).sum(dim=(0, 2, 3))
+        fn = (target_one_hot * (1 - pred)).sum(dim=(0, 2, 3))
+        beta_sq = beta ** 2
+        soft_fbeta = ((1 + beta_sq) * tp + smooth) / ((1 + beta_sq) * tp + beta_sq * fn + fp + smooth)
+    
+        # Aplicar pesos se fornecidos
+        if self.weights is not None:
+            class_weights = self.weights.to(pred.device)  # Garantir que os pesos estão no mesmo device
+            macro_fbeta = (soft_fbeta * class_weights).sum() / class_weights.sum()
+        else:
+            macro_fbeta = soft_fbeta.mean()
+
+        return 1 - macro_fbeta  # Loss, pois queremos minimizar
 
 
 
@@ -253,7 +303,8 @@ class EpochRunner:
         self.mode = mode
         self.model = model
         self.dataloader = dataloader
-        self.criterion = criterion
+        self.criterion = CombinedLoss(loss_mode = 'CE', weights = None, return_all_losses=True)
+
         self.num_classes = num_classes
         self.optimizer = optimizer
         self.simulated_batch_size = simulated_batch_size
@@ -269,18 +320,16 @@ class EpochRunner:
         self.model.train() if self.mode == 'train' else self.model.eval()
         with torch.set_grad_enabled(self.mode == 'train'):
             if self.mode == 'train':
-                self.optimizer.zero_grad()
+                self.optimizer.zero_grad()            
             for i, batch in enumerate(tqdm(self.dataloader)):
                 if len(batch)==2:
                     images, labels = batch
                 if len(batch)==5:
                     images, labels, x, y, f = batch
-                    
                 images, labels = images.to(self.device), labels.to(self.device)
                 logits = self.model(images)
-                pred = F.softmax(logits, dim=1)
+                pred = F.softmax(logits, dim=1)                
                 self.metrics_tracker.track_preds(labels, pred)
-
                 if self.criterion:
                     loss, CE, dice = self.criterion(logits, labels)
                     loss, CE, dice = loss / self.accumulation_steps, CE / self.accumulation_steps, dice / self.accumulation_steps
@@ -291,8 +340,9 @@ class EpochRunner:
                             self.optimizer.step()
                             self.optimizer.zero_grad()
 
-                self.metrics_tracker.store_metrics(loss.item(), CE.item(), dice.item(), batch_size=images.shape[0])
-
+                    self.metrics_tracker.store_metrics(loss.item(), CE.item(), dice.item(), batch_size=images.shape[0])
+                
+                self.metrics_tracker.update_batch_count(batch_size=images.shape[0]) 
                 # 🔹 Show predictions if required
                 if show_pred: # if true, show in all batches, if a number n, show only n first batches
                     try:
@@ -400,13 +450,17 @@ def update_lr(model, train_loader, val_loader, optimizer, criterion, num_iter=10
 
 ############### ---------- TRAINING ---------------##########################
 
-
-def train_model(model, train_loader, val_loader, loss_mode, device, num_classes, epochs = 15, simulated_batch_size = 64, patience = 0, weights = None, save_to = None, show_batches = 3):
+def train_model(model, train_loader, val_loader, loss_mode, device, num_classes, 
+                epochs = 15, simulated_batch_size = 64, patience = 0, weights = None, 
+                improvement_criterion = 'loss_macrof1', improvement_tolerance = 0.05,
+                save_to = None, show_batches = 3, save_subfolder = None, working_dir = None, 
+                minimum_lr = 1e-7, maximum_lr = 0.1):
 
 ### -------------- PREPARING OPTIMIZER, LOSS, METADATA -------------------
 
-    working_dir = os.path.abspath('..')
-    save_to = os.path.join(working_dir, 'models', save_to)
+    if working_dir is None:
+        working_dir = os.path.abspath('..')
+
     current_patience = 0
     history = []
     start_epoch = 0
@@ -414,21 +468,35 @@ def train_model(model, train_loader, val_loader, loss_mode, device, num_classes,
     best_optimizer_state = None
     best_epoch = -1
     best_val_loss = float('inf')
+    best_val_macrof1 = float(0)
     best_epoch_info = {}
-
-    minimum_lr = 1e-7
-    maximum_lr = 0.1
+    is_loss_decreasing = False    
     optimizer = optim.AdamW(model.parameters(), lr=minimum_lr, weight_decay=0.05)
     
     if weights is not None:
+        if not isinstance(weights, torch.Tensor):
+            weights = torch.FloatTensor(weights)
         weights = weights.to(device)
-        print('Using Weighted loss.')    
+        print('Using Weighted loss: ', weights)    
     criterion = CombinedLoss(loss_mode = loss_mode, weights = weights, return_all_losses=True)
+    
+    if not save_subfolder:
+        save_to = os.path.join(working_dir, 'models', save_to)
+    else:
+        folder = os.path.join(working_dir, 'models', save_subfolder)
+        os.makedirs(folder, exist_ok=True)
+        save_to = os.path.join(folder, save_to)
     
     i = save_to.rfind('/')
     j = save_to.rfind('.')
     model_name = save_to[i+1:j] #sem /, até antes do ponto
-    csv_filename = os.path.join(working_dir, 'experimental_results', model_name+'.csv')
+
+    if not save_subfolder:
+        csv_filename = os.path.join(working_dir, 'experimental_results', model_name+'.csv')
+    else:
+        folder = os.path.join(working_dir, 'experimental_results', save_subfolder)
+        os.makedirs(folder, exist_ok=True)
+        csv_filename = os.path.join(folder, model_name+'.csv')
 
     metadata = {}
     metadata['file_path']=csv_filename
@@ -447,15 +515,20 @@ def train_model(model, train_loader, val_loader, loss_mode, device, num_classes,
         best_model_state = checkpoint['best_model_state_dict']
         best_optimizer_state = checkpoint['best_optimizer_state_dict']
         model.load_state_dict(best_model_state)
+        #if continue_from == 'last':
+        #    model.load_state_dict(best_model_state)
         optimizer.load_state_dict(best_optimizer_state) 
         best_val_loss = checkpoint['best_val_loss']
+        if 'best_val_macrof1' in checkpoint:
+            best_val_macrof1 = checkpoint['best_val_macrof1']
         best_epoch_info = checkpoint['best_epoch_info']
         current_lr = checkpoint['current_lr']
-        current_patience = checkpoint['current_parience']       
+        current_patience = checkpoint['current_patience']  
+        is_loss_decreasing = checkpoint['is_loss_decreasing']     
         metadata = checkpoint['metadata']
         info = checkpoint['best_epoch_info']
         history = checkpoint['history']
-        print(f"Resumed from epoch {start_epoch-1}, best val loss: {best_val_loss:.4f}")
+        print(f"Resumed from epoch {start_epoch-1}, best val loss: {best_val_loss:.4f}, best val loss: {best_val_macrof1:.4f}")
         
         if start_epoch >= epochs:
             print(f"Training already completed {epochs} epochs")
@@ -464,8 +537,7 @@ def train_model(model, train_loader, val_loader, loss_mode, device, num_classes,
         # Find initial LR if no checkpoint
         current_lr = update_lr(model, train_loader, val_loader, optimizer, criterion, start_lr=minimum_lr, end_lr=maximum_lr, num_iter=100)
 
-    ### -------------- INER TRAINING LOOP -------------------
-    finish = False
+    ### -------------- INNER TRAINING LOOP -------------------
     for epoch in range(start_epoch, epochs):
 
         print('--------------------------------')
@@ -485,7 +557,11 @@ def train_model(model, train_loader, val_loader, loss_mode, device, num_classes,
         print(f'Train Loss: {train_loss}, {train_CE}, {train_dice}')
         print(f'Train Accuracy: {train_acc}')
         print(f'Train confusion matrix:')
-        view.plot_confusion_matrix(train_cm)
+        try:
+            view.plot_confusion_matrix(train_cm)
+        except:
+            #TODO: fix is
+            print('Error while plotting the confusuion matrix.')
         print(train_report)
         ### -------------- VALIDATING -------------------
 
@@ -499,17 +575,30 @@ def train_model(model, train_loader, val_loader, loss_mode, device, num_classes,
         val_time = time.time()-val_time
         peak_val_memory = f"{torch.cuda.max_memory_allocated() / 1024 ** 2:.2f} MB"
         torch.cuda.empty_cache()
+        
         print(f'Val Loss: {val_loss}, {val_CE}, {val_dice}')
+        ### updating is loss decreasing
+        if len(history)>1:
+            is_loss_decreasing = val_loss < history[-1]['val_loss']
+        else:
+            is_loss_decreasing = False
+        if is_loss_decreasing:
+            print('It is decreasing!')
         print(f'Val Accuracy: {val_acc}')
         print(f'Val confusion matrix:')
-        view.plot_confusion_matrix(val_cm)
+        try:
+            view.plot_confusion_matrix(val_cm)
+        except:
+            #TODO: fix is
+            print('Error while plotting the confusuion matrix.')
         print(val_report)
         
         ### ------------- ORGANIZING INFORMATON ------------
         info = {}   
         info['epoch']=epoch   
         info['lr']=current_lr
-        info['patience']=current_patience   
+        info['patience']=current_patience 
+        info['is_loss_decreasing']=is_loss_decreasing  
         
         #loss = float(loss.item() if isinstance(loss, torch.Tensor) else loss) if isinstance(loss, (torch.Tensor, np.floating, np.integer)) else float(loss)
 
@@ -542,9 +631,19 @@ def train_model(model, train_loader, val_loader, loss_mode, device, num_classes,
         info['val_confusion_matrix']=val_cm
         history.append(info)
         ### ---------------- SAVING IF BEST --------------
-        if val_loss < best_val_loss:
+
+        
+        improved = False
+        if 'loss' in improvement_criterion:
+            if val_loss <= best_val_loss * (1 + improvement_tolerance):
+                improved = True
+        if 'macrof1' in improvement_criterion:
+            if info['val_macro'] >= best_val_macrof1 * (1 - improvement_tolerance/10):
+                improved = True
+        if improved: #if is decreasing(history[-1]['val_loss']-history[-1]['val_loss'])
             best_epoch = epoch
             best_val_loss = val_loss
+            best_val_macrof1 = info['val_macro']
             current_patience = 0
             best_model_state = copy.deepcopy(model.state_dict())
             best_optimizer_state = copy.deepcopy(optimizer.state_dict())
@@ -572,16 +671,17 @@ def train_model(model, train_loader, val_loader, loss_mode, device, num_classes,
         ### ---------------- SETTING NEW LR IF PATIENCE MET --------------
 
         if current_patience >= patience:
-            print(f"Patience exhausted at epoch {epoch}.")# Recalculating learning rate...")
-            model.load_state_dict(best_model_state)
-            optimizer.load_state_dict(best_optimizer_state)
-            start_lr = max(minimum_lr, current_lr/100)
-            end_lr = min(maximum_lr, current_lr)
-            current_lr = update_lr(model, train_loader, val_loader, optimizer, criterion, 
-                                   start_lr=start_lr, end_lr=end_lr, num_iter=50)
+            if not is_loss_decreasing:
+                print(f"Patience exhausted at epoch {epoch}.")# Recalculating learning rate...")
+                model.load_state_dict(best_model_state)
+                optimizer.load_state_dict(best_optimizer_state)
+                start_lr = max(minimum_lr, current_lr/100)
+                end_lr = min(maximum_lr, current_lr)
+                current_lr = update_lr(model, train_loader, val_loader, optimizer, criterion, 
+                                    start_lr=start_lr, end_lr=end_lr, num_iter=50)
 
-            current_patience = 0
-
+                current_patience = 0
+                is_loss_decreasing = False
         ### ---------------- SAVING CHECKPOINT --------------        
         if save_to is not None:
             checkpoint = {
@@ -590,9 +690,11 @@ def train_model(model, train_loader, val_loader, loss_mode, device, num_classes,
                 "best_model_state_dict": best_model_state,
                 "best_optimizer_state_dict": best_optimizer_state, 
                 "best_val_loss": best_val_loss,
+                "best_val_macrof1": best_val_macrof1,
                 "best_epoch_info": best_epoch_info,
                 "current_lr": current_lr,
-                "current_parience": current_patience,
+                "current_patience": current_patience,
+                "is_loss_decreasing": is_loss_decreasing,
                 "metadata": metadata,
                 "history": history, #info of all epochs
                 }
@@ -604,12 +706,22 @@ def train_model(model, train_loader, val_loader, loss_mode, device, num_classes,
     val_losses = [info['val_loss'] for info in history]           
     train_accs = [info['train_acc'] for info in history]           
     val_accs = [info['val_acc'] for info in history]           
-    png_filename = os.path.join(working_dir, 'experimental_results', 'loss_'+model_name+'.png')
+    
+    if save_subfolder:
+        folder = os.path.join(working_dir, 'experimental_results', save_subfolder)
+    else:
+        folder = os.path.join(working_dir, 'experimental_results')
+        
+    png_filename = os.path.join(folder, 'loss_'+model_name+'.png')
     view.plot_metrics(history, 'loss', save_file=png_filename)
     #plot_losses(train_losses, val_losses, filename = png_filename)
-    png_filename = os.path.join(working_dir, 'experimental_results', 'accuracy_'+model_name+'.png')
+    png_filename = os.path.join(folder, 'accuracy_'+model_name+'.png')
     view.plot_metrics(history, 'acc', save_file=png_filename)
     #plot_acc(train_accs, val_accs, filename = png_filename)
+    png_filename = os.path.join(folder, 'macroF1_'+model_name+'.png')
+    view.plot_metrics(history, 'macro', save_file=png_filename)
+    
+
 
 def plot_losses(train_losses, val_losses, title="Training and Validation Loss", xlabel="Epoch", ylabel="Loss", filename=None):
     """
@@ -772,92 +884,109 @@ def apply_opening_multiclass_opencv(image, kernel=None):
     return result
 
 
-def test_model(model, checkpoint_path, dataloader, device, num_classes, return_idx = False, show_batches = 3, yield_data = True):
+
+def test_model(model, checkpoint_path, dataloader, num_classes, device, loss_mode = 'CE', show_batches = True, set_name = '', subfolder = '', show_cm = 'simple'):
     working_dir = os.path.abspath('..')
-    checkpoint_path = os.path.join(working_dir, 'models', checkpoint_path)
-    if os.path.exists(checkpoint_path):
-        checkpoint = torch.load(checkpoint_path, weights_only=False)
+    checkpoint_path_ = os.path.join(working_dir, 'models', subfolder, checkpoint_path)
+    if os.path.exists(checkpoint_path_):
+        checkpoint = torch.load(checkpoint_path_, weights_only=False)
         metadata = checkpoint['metadata']
         #print(checkpoint_path)
         #print(checkpoint)
         model.load_state_dict(checkpoint['best_model_state_dict'])
-    batch_size = dataloader.batch_size
+    else:
+        raise ValueError(f"Erro na leitura do modelo {checkpoint_path_}.")
+    criterion = CombinedLoss(loss_mode = loss_mode, weights = None, return_all_losses=True)
+
     torch.cuda.reset_peak_memory_stats()
     run_time = time.time()
-    loss, CE, dice, report, acc, cm = run_epoch('test', model, dataloader, criterion = None, num_classes = num_classes, optimizer=None, simulated_batch_size = batch_size, device=device, return_report = True, show_pred = show_batches, yield_data=yield_data)
+
+    runner = EpochRunner('test', model, dataloader, criterion, num_classes=num_classes, 
+                                optimizer=None, simulated_batch_size = dataloader.batch_size, device = device)
+    runner.run(show_pred = show_batches)  
+    loss, CE, dice, report, acc, cm = runner.get_metrics()
     run_time = time.time()-run_time
     peak_val_memory = f"{torch.cuda.max_memory_allocated() / 1024 ** 2:.2f} MB"
     torch.cuda.empty_cache()
-    print(f'Test Loss: {loss}, {CE}, {dice}')
-    print(f'Test Accuracy: {acc}')
-    print(f'Test confusion matrix:')
-    view.plot_confusion_matrix(cm)
-    print(report)
-
-    if not return_idx:
-        yield images, labels, pred, metrics, logits
-    if return_idx:
-        yield images, labels, pred, x, y, f, metrics, logits
+    print('_____________________________________')
+    print(checkpoint_path)
+    print(f'Loss: {loss}, {CE}, {dice}')
+    print(f'Accuracy: {acc}')
+    print(f'confusion matrix:')
     
 
 
-def test_model(model, checkpoint_path, dataloader, device, num_classes, return_idx = False):
-
-    working_dir = os.path.abspath('..')
-    checkpoint_path = os.path.join(working_dir, 'models', checkpoint_path)
-    if os.path.exists(checkpoint_path):
-        checkpoint = torch.load(checkpoint_path, weights_only=False)
-        metadata = checkpoint['metadata']
-        #print(checkpoint_path)
-        #print(checkpoint)
-        model.load_state_dict(checkpoint['best_model_state_dict'])
-            
-    
-    model.eval()
-    for i, batch in enumerate(tqdm(dataloader)):
-        if not return_idx:
-            images, labels = batch
-        if return_idx:
-            images, labels, x, y, f = batch
-        #load and prepare the data
-        images=images.to(device)
-        labels=labels.to(device)
+    classes_list = [[2],[4], [5], [2,4,5]]
+    #classes_list = [[2,4,5]]
+    for cl in classes_list:
+        str_cl = [str(c) for c in cl]
+        save_ending = f'-CM-'+set_name+'.png'
+        os.makedirs(os.path.join(working_dir, 'experimental_results', 'confusion_matrix', subfolder), exist_ok=True)
+        save_to = os.path.join(working_dir, 'experimental_results', 'confusion_matrix', subfolder,checkpoint_path.replace('.pth', save_ending))
         
-        logits = model(images)
-        pred = F.softmax(logits, dim=1)
-        if 0:
-            print('Image')
-            print(torch.min(images))
-            print(torch.max(images))
-            print('Logits')
-            print(torch.min(logits))
-            print(torch.max(logits))
-            
-            print('Prediction')
-            print(torch.min(pred))
-            print(torch.max(pred))
-            print('----')
+        cm = view.plot_confusion_matrix_simple(cm, save_to=save_to)
+        
+    return cm, report
 
-        metrics = []
-        #TODO: fix metrixs
-        if 0:
-            #for j in range(images.shape[0]):  # Iterate over each image in the batch
-            one_hot_label = F.one_hot(labels[j].squeeze(), num_classes)
-            one_hot_label = one_hot_label.permute(2, 0, 1) 
-            one_hot_pred = F.one_hot(pred[j].squeeze(), num_classes)
-            one_hot_pred = one_hot_pred.permute(2, 0, 1) 
+def compute_iou_per_sample(pred, label, num_classes):
+    """
+    Calcula o IoU (Intersection over Union) por classe para cada item do batch e o IoU médio.
 
-            metrics.append(image_metrics(one_hot_pred, one_hot_label, num_classes, epsilon=1e-7))
-            
-            #if not return_idx:
-            #    yield images[j].cpu().detach().numpy(), one_hot_label.cpu().detach().numpy(), one_hot_pred.cpu().detach().numpy(), metrics, logits[j].cpu().detach().numpy()
-            #if return_idx:
-            #    yield images[j].cpu().detach().numpy(), one_hot_label.cpu().detach().numpy(), one_hot_pred.cpu().detach().numpy(), x, y, f, metrics, logits[j].cpu().detach().numpy()
-        if not return_idx:
-            yield images, labels, pred, metrics, logits
-        if return_idx:
-            yield images, labels, pred, x, y, f, metrics, logits
-         
+    Parâmetros:
+    - pred: Tensor (N, C, W, H) contendo as predições (probabilidades), com N = batch size e C = número de classes.
+    - label: Tensor (N, W, H) contendo os rótulos verdadeiros (inteiros de 0 a C-1).
+    - num_classes: Número total de classes.
+
+    Retorna:
+    - iou_per_batch: Lista com um vetor de IoUs por classe para cada item no batch.
+    - mean_iou_per_batch: Lista com o IoU médio por amostra no batch.
+    """
+    batch_size = pred.shape[0]
+    iou_per_batch = []
+    mean_iou_per_batch = []
+    macro_iou_per_batch = []
+
+    for i in range(batch_size):
+        iou_per_class = []
+        
+        # Converte probabilidades em rótulos discretos usando argmax
+        pred_i = pred[i].argmax(dim=0)  # (W, H)
+        label_i = label[i]  # (W, H)
+
+        total_intersection = 0
+        total_union = 0
+
+        for cls in range(num_classes):
+            pred_cls = (pred_i == cls)  # Máscara booleana para a classe cls
+            label_cls = (label_i == cls)  # Máscara booleana para a classe cls no ground truth
+
+            intersection = (pred_cls & label_cls).sum().float()
+            union = (pred_cls | label_cls).sum().float()
+
+            total_intersection += intersection
+            total_union += union
+
+            if union == 0:
+                iou_per_class.append(float('nan'))  # Ignora classes que não aparecem
+            else:
+                iou_per_class.append((intersection / union).item())
+
+        # IoU médio para a amostra (não leva em conta as classes com union == 0)
+        mean_iou = total_intersection / total_union if total_union != 0 else float('nan')
+        mean_iou_per_batch.append(mean_iou)
+
+        valid_iou = [v for v in iou_per_class if not math.isnan(v)]  # Remove 'nan' para cálculo
+        if len(valid_iou) > 0:
+            macro_iou_per_batch.append(np.mean(valid_iou))        
+        else:
+            macro_iou_per_batch.append(float('nan'))
+
+        iou_per_batch.append(iou_per_class)
+
+    return iou_per_batch, mean_iou_per_batch, macro_iou_per_batch
+
+
+
 
 def flatten_masks(masks):
     """Flatten masks to shape [N, C], where N is the number of pixels."""
@@ -962,6 +1091,7 @@ class Metrics:
         self.total_loss += loss * batch_size  # Multiply by valid pixels in this batch
         self.total_CE += CE * batch_size
         self.total_dice+= dice * batch_size
+    def update_batch_count(self, batch_size):
         self.total_samples += batch_size
 
     def avg_metrics(self):

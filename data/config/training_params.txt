@@ -1,0 +1,45 @@
+# Parâmetros para o preprocessamento dos dados
+
+#Modelos: lista de tipos de modelos a serem treinados.
+# Cada valor é de um tipo de modelo, que indica também o tamanho dos patches.
+#Opções (que foram testadas):
+# UNet-64
+# UNet-256
+# UNetSmall-64
+# UNetSmall-256
+# UNetResNet34-224
+# UNetEfficientNetB0-224 
+# UNetConvNext-224
+# HRNetW18-512
+# HRNetW32-512
+# HRNetW48-512
+
+models = ['UNetSmall-256']
+
+# loss:
+# o tipo de loss
+#Opções:
+# CE
+# CE-dice
+# dice
+# macroF1 (1 - soft macroF1-score)
+# macroF2 (1 - soft macroF2-score)
+# groups (experimental, calcula um loss distinto para cada grupo de classes, de 2, 4 e 5 grupos de classes)
+
+loss = CE
+
+# weighted_loss: Aplicar ponderamento no loss?
+# se sim, conta os rótulos das classes do conjunto de treino e aplica automacitamente como pesos para o loss
+weighted_loss = True
+
+# número de épocas:
+
+num_epochs = 15
+
+# paciência do escalonador de LR:
+
+patience = 3
+
+# arquivo de configuração da pipeline do dataloader
+
+dataloader_config = dataloader_params.txt

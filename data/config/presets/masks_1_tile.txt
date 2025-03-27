@@ -1,0 +1,13 @@
+# shapefile_dir é o caminho do shapefile que contém os polígonos das AU.
+shapefile_path = data/masks/AreasUrbanizadas2019_Brasil/AU_2022_AreasUrbanizadas2019_Brasil.shp
+
+# bdc_grid_path é o caminho do shapefile dos grids do BDC 
+bdc_grid_path = data/grids/BDC_SM_V2/BDC_SM_V2Polygon.shp
+
+#save_dir é a raiz do caminho que as mascaras serão salvas
+save_dir = data/masks
+
+# tiles que serão rasterizados em máscaras
+
+tiles:
+'Belo Horizonte': '032027',

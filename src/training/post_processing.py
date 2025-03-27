@@ -1,9 +1,34 @@
+import os
 import numpy as np
 import cv2
 from scipy.ndimage import gaussian_filter
 from skimage.morphology import opening, closing, disk
 from scipy.special import softmax
+import rasterio
+from pyproj import CRS
+from rasterio.transform import Affine
+
+
 #from osgeo import gdal
+
+def sieve(mask, min_size=100):
+    """
+    Remove componentes pequenas de uma máscara binária.
+
+    Parâmetros:
+    - mask: numpy array binário (0 e 1)
+    - min_size: tamanho mínimo para manter um componente
+
+    Retorna:
+    - Máscara filtrada, mantendo apenas componentes maiores que min_size
+    """
+    labeled_mask, num_labels = ndi.label(mask)  # Rotular componentes conectadas
+    sizes = np.bincount(labeled_mask.ravel())  # Contar pixels por componente
+    sizes[0] = 0  # Ignorar fundo
+
+    mask_sieved = np.isin(labeled_mask, np.where(sizes >= min_size)[0]).astype(np.uint8)
+
+    return mask_sieved
 
 def smooth_logits(logits, method='gaussian', sigma=1):
     """Apply smoothing to logits using Gaussian or TVD."""
@@ -46,15 +71,6 @@ def morphological_operations(mask, kernel_size=3):
     
     return cleaned
 
-def apply_gdal_sieve(segmentation_mask, min_size=100):
-    """Remove small isolated regions using GDAL Sieve."""
-    driver = gdal.GetDriverByName("MEM")
-    src_ds = driver.Create("", segmentation_mask.shape[1], segmentation_mask.shape[0], 1, gdal.GDT_Int32)
-    src_ds.GetRasterBand(1).WriteArray(segmentation_mask)
-
-    gdal.SieveFilter(src_ds.GetRasterBand(1), None, src_ds.GetRasterBand(1), threshold=min_size)
-
-    return src_ds.GetRasterBand(1).ReadAsArray()
 
 def full_segmentation_pipeline(image, logits, smooth_method='gaussian', sigma=1, min_size=100, kernel_size=3):
     """
@@ -94,7 +110,8 @@ import pydensecrf.densecrf as dcrf
 from pydensecrf.utils import unary_from_softmax, create_pairwise_bilateral, create_pairwise_gaussian
 from skimage.morphology import remove_small_objects, remove_small_holes
 from tqdm import tqdm
-
+import scipy.ndimage as ndi
+import cv2
 
 import src.data.utils as utils
 import src.data.preprocess_data as data
@@ -113,10 +130,11 @@ def remove_small(mask, min_size = 10):
         cleaned_mask[cleaned_binary_mask] = class_value
     return cleaned_mask
 
-import cv2
-import numpy as np
 
-def refine_segmentation(mask, kernel_size=3):
+def fill_holes(mask):
+    return ndi.binary_fill_holes(mask).astype(np.uint8)
+
+def refine_segmentation(mask, kernel_size=3, min_size = 50):
     """
     Apply morphological opening followed by closing to smooth a multiclass segmentation mask.
     
@@ -133,12 +151,23 @@ def refine_segmentation(mask, kernel_size=3):
     for class_id in np.unique(mask):
         if class_id == 0:  # Assuming 0 is the background, skip it if necessary
             continue
-        class_mask = (mask == class_id).astype(np.uint8)
-        opened = cv2.morphologyEx(class_mask, cv2.MORPH_OPEN, kernel)
-        closed = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, kernel)
-        closed_again = cv2.morphologyEx(closed, cv2.MORPH_CLOSE, kernel)
 
-        refined_mask[closed_again > 0] = class_id  # Restore class label
+        class_mask = (mask == class_id).astype(np.uint8)
+        
+        mask_ = remove_small_objects(class_mask, min_size)  # Remover pequenos ruídos
+        mask_ = fill_holes(mask_)  # Preencher buracos internos
+        mask_ = cv2.morphologyEx(mask_, cv2.MORPH_OPEN, kernel)  # Abertura
+        mask_ = cv2.morphologyEx(mask_, cv2.MORPH_CLOSE, kernel)  # Fechamento
+        
+        refined_mask[mask_ > 0] = class_id  # Restore class label
+        
+        #opened = cv2.morphologyEx(class_mask, cv2.MORPH_OPEN, kernel)
+        #closed = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, kernel)
+        #closed_again = cv2.morphologyEx(closed, cv2.MORPH_CLOSE, kernel)
+
+        #refined_mask[closed > 0] = class_id  # Restore class label
+        #refined_mask[closed_again > 0] = class_id  # Restore class label
+
 
     return refined_mask
 
@@ -228,9 +257,8 @@ def image_to_RGB(image, pca_file = None):
         rgb_img = image[[3, 2, 1], :, :]
     rgb_img = np.transpose(rgb_img, (1, 2, 0))  # shape: (3, W, H)
 
-#    rgb_img = rgb_img.permute(1, 2, 0).detach().cpu().numpy()
-    rgb_img-=np.min(rgb_img)
-    rgb_img/=np.max(rgb_img)
+    #rgb_img-=np.min(rgb_img)
+    #rgb_img/=np.max(rgb_img)
     
     return (rgb_img*255).astype(np.uint8)
 
@@ -314,17 +342,17 @@ def morphological_operations(mask, kernel_size=3):
 
 
 class ReconstructTile:
-    def __init__(self, size = (10560, 10560), subtile_size = (10560//6, 10560//6), patch_size = 256, stride = 256, edge_removal = 8, num_classes = 5):
+    def __init__(self, size = (10560, 10560), subtile_size = (10560//6, 10560//6), patch_size = 256, stride = 256, edge_removal = 8, num_classes = 5, num_channels = 12, tile_id = '032027'):
         self.tile = np.zeros(shape=size, dtype=np.float32)
         self.logits = np.zeros(shape=(num_classes, size[0], size[1]), dtype=np.float16)
         self.labels = -np.ones(shape=size, dtype=np.uint8)
-        self.preds = -np.ones(shape=size, dtype=np.uint8)
+        self.preds = np.zeros(shape=size, dtype=np.uint8)
         self.count = np.zeros(shape=size, dtype=np.int32)
         self.crf = -np.ones(shape=size, dtype=np.uint8)
         self.cleaned_preds = -np.ones(shape=size, dtype=np.uint8)
         self.cleaned_crf = -np.ones(shape=size, dtype=np.uint8)
         self.vi_completion = -np.ones(shape=size, dtype=np.uint8)
-        self.image = np.ones(shape=(12, size[0], size[1]), dtype=np.float32)
+        self.image = np.ones(shape=(num_channels, size[0], size[1]), dtype=np.float32)
         self.rgb_image = np.zeros(shape=(size[0], size[1], 3), dtype=np.uint8)
         self.ss = subtile_size
         self.ps = patch_size
@@ -332,6 +360,9 @@ class ReconstructTile:
         self.overlap=patch_size - stride
         self.size = size
         self.edge_removal = edge_removal
+        self.num_classes = num_classes
+        self.num_channels = num_channels
+        self.tile_id = tile_id
     def add_batch(self, xs, ys, fs, logits, preds, labels, imgs):
         batch_size = preds.shape[0]
         #print(xs, ys)
@@ -380,75 +411,283 @@ class ReconstructTile:
         self.logits = self.logits/self.count
         self.probs = softmax(self.logits)
         self.preds = np.argmax(self.probs, axis=0)
+    
+    def save_pred(self, folder_name, working_dir = None, save_subtiles = False):
+        if working_dir is None:
+            working_dir = os.path.abspath('..')
+        num_subtiles = self.size[0]//self.ss[0]
+        if self.num_classes == 5:
+            label_mapping = {1: 'Loteamento vazio',
+                             2: 'Outros equipamentos urbanos',
+                             3: 'Vazio intraurbano',
+                             4: 'Área urbanizada'
+                        }
+        if self.num_classes == 4:
+            label_mapping = {1: 'Loteamento vazio',
+                             2: 'Outros equipamentos urbanos',
+                             3: 'Área urbanizada'
+                        }
+        if self.num_classes == 2:
+            label_mapping = {1: 'Área urbanizada'
+                        }
+        folder = os.path.join(working_dir, 'data', 'results', f'S2-16D_V2_{self.tile_id}', f'{num_subtiles}x{num_subtiles}_subtiles', folder_name)
+        os.makedirs(folder, exist_ok=True)
+
+        self.preds
         
+        meta = {"tile_name": self.tile_id,
+                "tile": self.tile_id,
+                "label_mapping": label_mapping,
+                "source": "Generated by ReconstructTile: https://github.com/JonathanAlis/UrbanizedAreasSegmentation/blob/main/src/training/post_processing.py",
+                "author": "Jonathan Alis",
+                }
+        x_range = list(range(0,self.size[0],self.ss[0]))
+        y_range = list(range(0,self.size[1],self.ss[1]))
+
         
-    def post_process(self, x_idx, y_idx):
+        original_mask = os.path.join(working_dir, 'data', 'masks', f'mask_raster_{self.tile_id}.tif') 
+        with rasterio.open(original_mask) as src:
+            full_tile_transform = src.meta['transform']
+        if save_subtiles:
+            for x in x_range:
+                for y in y_range:
+                    output_file = os.path.join(folder, f'S2-16D_V2_{self.tile_id}_x={x}_y={y}.tif')
+                    print(f"Saving as {output_file}")
+                    
+                    a, b, c, d, e, f  = full_tile_transform.to_gdal()  # or use transform.a, transform.e, etc.
+                    new_c = c + x
+                    new_f = f + y
+                    subtile_transform = Affine(a, b, new_c, d, e, new_f)         
+    
+                    custom_crs_wkt = 'PROJCS["unknown",GEOGCS["unknown",DATUM["Unknown based on GRS80 ellipsoid",SPHEROID["GRS 1980",6378137,298.257222101,AUTHORITY["EPSG","7019"]]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["latitude_of_center",-12],PARAMETER["longitude_of_center",-54],PARAMETER["standard_parallel_1",-2],PARAMETER["standard_parallel_2",-22],PARAMETER["false_easting",5000000],PARAMETER["false_northing",10000000],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
+                    crs = CRS.from_wkt(custom_crs_wkt)
+
+                    with rasterio.open(
+                        output_file, 'w',
+                        driver='GTiff',
+                        height=self.ss[0],
+                        width=self.ss[1],
+                        count=1,
+                        dtype=np.uint8,
+                        crs = crs,
+                        transform=subtile_transform,
+                        compress='DEFLATE',
+                        predictor=1,
+                        tiled=True,
+                        blockxsize=512,
+                        blockysize=512,
+                        nodata=254
+                    ) as dst:
+                        dst.write(self.preds[x:x+self.ss[0], y:y+self.ss[1]], 1)
+                        dst.update_tags(**meta)
+
+        #full tile
+        output_file = os.path.join(folder, f'S2-16D_V2_{self.tile_id}.tif')
+        print(f"Saving as {output_file}")
+        bounds = [0, 0, self.size[0], self.size[1]]                
+        custom_crs_wkt = 'PROJCS["unknown",GEOGCS["unknown",DATUM["Unknown based on GRS80 ellipsoid",SPHEROID["GRS 1980",6378137,298.257222101,AUTHORITY["EPSG","7019"]]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["latitude_of_center",-12],PARAMETER["longitude_of_center",-54],PARAMETER["standard_parallel_1",-2],PARAMETER["standard_parallel_2",-22],PARAMETER["false_easting",5000000],PARAMETER["false_northing",10000000],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
+        crs = CRS.from_wkt(custom_crs_wkt)
+
+        with rasterio.open(
+            output_file, 'w',
+            driver='GTiff',
+            height=self.size[0],
+            width=self.size[1],
+            count=1,
+            dtype=np.uint8,
+            crs = crs,
+            transform=full_tile_transform,
+            compress='DEFLATE',
+            predictor=1,
+            tiled=True,
+            blockxsize=512,
+            blockysize=512,
+            nodata=254
+        ) as dst:
+            dst.write(self.preds, 1)
+            dst.update_tags(**meta)
+
+    def post_process_patch(self, x, y, size = 256):
         import numpy as np
         from scipy.ndimage import binary_opening, binary_closing, distance_transform_edt
         from skimage.morphology import disk
 
+        labels = self.labels[x:x+size, y:y+size]
 
-        
-        ppps = self.ss[0] #post processing patch size
-
-        x_range = list(range(0,self.size[0],self.ss[0]))
-        y_range = list(range(0,self.size[1],self.ss[1]))
-
-        print(x_range)
-        print(y_range)
-
-        x=x_range[x_idx]
-        y=y_range[y_idx]
-        labels = self.labels[x:x+self.ss[0], y:y+self.ss[1]]
-
-        logits_patch = self.logits[:,x:x+self.ss[0], y:y+self.ss[1]]
+        logits_patch = self.logits[:,x:x+size, y:y+size]
         smooth_logits_patch = smooth_logits(logits_patch, method='gaussian', sigma=1)
 
         prob_patch = softmax(logits_patch)#self.probs[:,x:x+self.ss[0], y:y+self.ss[1]]
-        rgb_patch = self.rgb_image[x:x+self.ss[0], y:y+self.ss[1],:]
-        pred_patch = self.preds[x:x+self.ss[0], y:y+self.ss[1]]
+        rgb_patch = self.rgb_image[x:x+size, y:y+size,:]
+        pred_patch = self.preds[x:x+size, y:y+size]
 
 
-        clean_pred = apply_dense_crf(rgb_patch, logits_patch)#(pred_patch, kernel_size=5))
-        clean_pred = np.argmax(clean_pred, axis=0).reshape(self.ss)
-        clean_noholes = remove_small(clean_pred, min_size = 50)
-        clean_noholes_2 = refine_segmentation(clean_pred, kernel_size=5)
-        noholes = remove_small(pred_patch, min_size = 50)
-        noholes2 = refine_segmentation(pred_patch, kernel_size=5)
-        rules = enforce_enclosure_rules(clean_noholes)
+        crf = apply_dense_crf(rgb_patch, logits_patch)#(pred_patch, kernel_size=5))
+        crf = np.argmax(crf, axis=0).reshape((size, size))
+        morph = refine_segmentation(pred_patch, kernel_size=5)
+        crf_morph = refine_segmentation(crf, kernel_size=5)
+        sieve_ = sieve(pred_patch, min_size=50)
+
+        return labels, pred_patch, crf, morph, crf_morph, sieve_
 
 
-
-        return labels, pred_patch, clean_pred, clean_noholes, clean_noholes_2, noholes, noholes2, rules
-
-        logits_patch = self.logits[:,i:i+self.ss[0], j:j+self.ss[1]]
-        rgb_patch = self.rgb_image[i:i+self.ss[0], j:j+self.ss[1],:]
-        pred_patch = self.preds[i:i+self.ss[0], j:j+self.ss[1]]
+    def post_process_tile(self, folder_name = None):
+        self.crf = np.zeros(shape=self.size, dtype=np.uint8)
+        self.morph = np.zeros(shape=self.size, dtype=np.uint8)
         
+        x_range = list(range(0,self.size[0],self.ss[0]))
+        y_range = list(range(0,self.size[1],self.ss[1]))
+        for x in x_range:
+            for y in y_range:
+                labels, pred_patch, crf, morph, crf_morph, sieve_ = self.post_process_patch(x, y, size = self.ss[0])
+                self.crf[x:x+self.ss[0], y:y+self.ss[1]] = crf
+                self.morph[x:x+self.ss[0], y:y+self.ss[1]] = morph
+        return self.crf, self.morph
 
-        for i in tqdm(range(0,self.size[0],self.ss[0])):
-            for j in tqdm(range(0,self.size[1],self.ss[1]),leave=False):
-                logits_patch = self.logits[:,i:i+self.ss[0], j:j+self.ss[1]]
-                rgb_patch = self.rgb_image[i:i+self.ss[0], j:j+self.ss[1],:]
-                pred_patch = self.preds[i:i+self.ss[0], j:j+self.ss[1]]
-                clean = full_segmentation_pipeline(rgb_patch, logits_patch, smooth_method='gaussian', sigma=1, min_size=100, kernel_size=5)
-                
-                crf, Q = apply_dense_crf__(rgb_patch, logits_patch)#, use_custom_compat=True, n_iter=10)
+    def save_cleaning(self, folder_name, working_dir = None, save_subtiles = False):
+        if not working_dir:
+            working_dir = os.path.abspath('..')
+        num_subtiles = self.size[0]//self.ss[0]
+        if self.num_classes == 5:
+            label_mapping = {1: 'Loteamento vazio',
+                             2: 'Outros equipamentos urbanos',
+                             3: 'Vazio intraurbano',
+                             4: 'Área urbanizada'
+                        }
+        if self.num_classes == 4:
+            label_mapping = {1: 'Loteamento vazio',
+                             2: 'Outros equipamentos urbanos',
+                             3: 'Área urbanizada'
+                        }
+        if self.num_classes == 2:
+            label_mapping = {1: 'Área urbanizada'
+                        }
+        folder = os.path.join(working_dir, 'data', 'results', f'S2-16D_V2_{self.tile_id}', f'{num_subtiles}x{num_subtiles}_subtiles', folder_name, 'cleaned')
+        os.makedirs(folder, exist_ok=True)
+
+        
+        meta = {"tile_name": self.tile_id,
+                "tile": self.tile_id,
+                "label_mapping": label_mapping,
+                "source": "Generated by ReconstructTile: https://github.com/JonathanAlis/UrbanizedAreasSegmentation/blob/main/src/training/post_processing.py",
+                "author": "Jonathan Alis",
+                }
+        x_range = list(range(0,self.size[0],self.ss[0]))
+        y_range = list(range(0,self.size[1],self.ss[1]))
+
+        
+        original_mask = os.path.join(working_dir, 'data', 'masks', f'mask_raster_{self.tile_id}.tif') 
+        with rasterio.open(original_mask) as src:
+            full_tile_transform = src.meta['transform']
+        if save_subtiles:
+            for x in x_range:
+                for y in y_range:
                     
-                #smooth = smooth_segmentation(pred_patch, kernel_size=5)
-                clean_pred = apply_dense_crf(self.image, logits_patch)#(pred_patch, kernel_size=5))
-                clean_crf = remove_small(crf, min_size = 50)
-                vazios = enforce_enclosure_rules(pred_patch)
+                    a, b, c, d, e, f  = full_tile_transform.to_gdal()  # or use transform.a, transform.e, etc.
+                    new_c = c + x
+                    new_f = f + y
+                    subtile_transform = Affine(a, b, new_c, d, e, new_f)         
+    
+                    custom_crs_wkt = 'PROJCS["unknown",GEOGCS["unknown",DATUM["Unknown based on GRS80 ellipsoid",SPHEROID["GRS 1980",6378137,298.257222101,AUTHORITY["EPSG","7019"]]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["latitude_of_center",-12],PARAMETER["longitude_of_center",-54],PARAMETER["standard_parallel_1",-2],PARAMETER["standard_parallel_2",-22],PARAMETER["false_easting",5000000],PARAMETER["false_northing",10000000],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
+                    crs = CRS.from_wkt(custom_crs_wkt)
+                    
+                    output_file = os.path.join(folder, f'S2-16D_V2_{self.tile_id}_x={x}_y={y}_CRF.tif')
+                    print(f"Saving as {output_file}")
 
-                return clean, crf, Q, clean_crf, clean_pred, vazios
-                self.clean[i:i+self.ss[0], j:j+self.ss[1]] = clean
-                self.crf[i:i+self.ss[0], j:j+self.ss[1]] = crf
-                self.Q[i:i+self.ss[0], j:j+self.ss[1]] = Q
-                self.cleaned_crf[i:i+self.ss[0], j:j+self.ss[1]] = clean_crf
-                self.cleaned_preds[i:i+self.ss[0], j:j+self.ss[1]] = clean_pred
-                self.vi_completion[i:i+self.ss[0], j:j+self.ss[1]] = vazios
-                break
-            break
+                    with rasterio.open(
+                        output_file, 'w',
+                        driver='GTiff',
+                        height=self.ss[0],
+                        width=self.ss[1],
+                        count=1,
+                        dtype=np.uint8,
+                        crs = crs,
+                        transform=subtile_transform,
+                        compress='DEFLATE',
+                        predictor=1,
+                        tiled=True,
+                        blockxsize=512,
+                        blockysize=512,
+                        nodata=254
+                    ) as dst:
+                        dst.write(self.crf[x:x+self.ss[0], y:y+self.ss[1]], 1)
+                        dst.update_tags(**meta)
+
+                    output_file = os.path.join(folder, f'S2-16D_V2_{self.tile_id}_x={x}_y={y}_morph.tif')
+                    print(f"Saving as {output_file}")
+
+                    with rasterio.open(
+                        output_file, 'w',
+                        driver='GTiff',
+                        height=self.ss[0],
+                        width=self.ss[1],
+                        count=1,
+                        dtype=np.uint8,
+                        crs = crs,
+                        transform=subtile_transform,
+                        compress='DEFLATE',
+                        predictor=1,
+                        tiled=True,
+                        blockxsize=512,
+                        blockysize=512,
+                        nodata=254
+                    ) as dst:
+                        dst.write(self.morph[x:x+self.ss[0], y:y+self.ss[1]], 1)
+                        dst.update_tags(**meta)
+
+        #full tile
+        output_file = os.path.join(folder, f'S2-16D_V2_{self.tile_id}_CRF.tif')
+        print(f"Saving as {output_file}")
+        bounds = [0, 0, self.size[0], self.size[1]]                
+        custom_crs_wkt = 'PROJCS["unknown",GEOGCS["unknown",DATUM["Unknown based on GRS80 ellipsoid",SPHEROID["GRS 1980",6378137,298.257222101,AUTHORITY["EPSG","7019"]]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["latitude_of_center",-12],PARAMETER["longitude_of_center",-54],PARAMETER["standard_parallel_1",-2],PARAMETER["standard_parallel_2",-22],PARAMETER["false_easting",5000000],PARAMETER["false_northing",10000000],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
+        crs = CRS.from_wkt(custom_crs_wkt)
+
+        with rasterio.open(
+            output_file, 'w',
+            driver='GTiff',
+            height=self.size[0],
+            width=self.size[1],
+            count=1,
+            dtype=np.uint8,
+            crs = crs,
+            transform=full_tile_transform,
+            compress='DEFLATE',
+            predictor=1,
+            tiled=True,
+            blockxsize=512,
+            blockysize=512,
+            nodata=254
+        ) as dst:
+            dst.write(self.crf, 1)
+            dst.update_tags(**meta)
+
+        #full tile
+        output_file = os.path.join(folder, f'S2-16D_V2_{self.tile_id}_morph.tif')
+        print(f"Saving as {output_file}")
+        bounds = [0, 0, self.size[0], self.size[1]]                
+        custom_crs_wkt = 'PROJCS["unknown",GEOGCS["unknown",DATUM["Unknown based on GRS80 ellipsoid",SPHEROID["GRS 1980",6378137,298.257222101,AUTHORITY["EPSG","7019"]]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]]],PROJECTION["Albers_Conic_Equal_Area"],PARAMETER["latitude_of_center",-12],PARAMETER["longitude_of_center",-54],PARAMETER["standard_parallel_1",-2],PARAMETER["standard_parallel_2",-22],PARAMETER["false_easting",5000000],PARAMETER["false_northing",10000000],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
+        crs = CRS.from_wkt(custom_crs_wkt)
+
+        with rasterio.open(
+            output_file, 'w',
+            driver='GTiff',
+            height=self.size[0],
+            width=self.size[1],
+            count=1,
+            dtype=np.uint8,
+            crs = crs,
+            transform=full_tile_transform,
+            compress='DEFLATE',
+            predictor=1,
+            tiled=True,
+            blockxsize=512,
+            blockysize=512,
+            nodata=254
+        ) as dst:
+            dst.write(self.morph, 1)
+            dst.update_tags(**meta)
+
+
 
 import numpy as np
 import cv2

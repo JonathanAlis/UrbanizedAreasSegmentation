@@ -13,6 +13,12 @@ def get_rgb(multi_channel_image:torch.Tensor):
         rgb_image = rgb_image.permute(1, 2, 0)
         return rgb_image.cpu().detach().numpy()
 
+def get_rgb_np(multi_channel_image: np.ndarray):
+    if multi_channel_image.shape[0] != 3:
+        rgb_image = multi_channel_image[1:4, :, :]
+        rgb_image = np.transpose(rgb_image, (1, 2, 0))  # Permute dimensions
+        return rgb_image
+    
 def move_to_0_1(image):
     image = image - np.min(image)
     image /= np.max(image)
@@ -129,7 +135,6 @@ def plot_metrics(history, c='loss', save_file: str = None):
         all_values.append(info[f'val_{c}'])
 
         if info['lr'] != last_lr:
-            print("Novo LR")
             branches.append(branch) #nao apend, termina e cria outro
             branches_train.append(branch_train) #nao apend, termina e cria outro
             branches_val.append(branch_val) #nao apend, termina e cria outro
@@ -207,11 +212,31 @@ def plot_metrics(history, c='loss', save_file: str = None):
         plt.savefig(save_file)
         print(f"Plot saved to {save_file}")
 
+import numpy as np
+
+def calculate_recalls(confusion_matrix):
+    confusion_matrix = np.array(confusion_matrix)
+    num_classes = confusion_matrix.shape[0]
+    TP = np.diag(confusion_matrix)  # True Positives are the diagonal elements
+    FN = confusion_matrix.sum(axis=1) - TP  # False Negatives are row sums minus TP
+    class_totals = confusion_matrix.sum(axis=1)  # Total examples per class (row sums)
+    total_examples = confusion_matrix.sum()  # Total examples in the dataset
+    recalls = TP / (TP + FN)  # Recall = TP / (TP + FN)
+    macro_recall = np.mean(recalls)
+    weights = class_totals / total_examples
+    weighted_recall = np.sum(weights * recalls)
+    global_recall = TP.sum() / total_examples
+    return {
+        'macro_recall': macro_recall,
+        'weighted_recall': weighted_recall,
+        'global_recall': global_recall
+    }
+
 import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-def plot_confusion_matrix(cm: torch.Tensor, class_names=None, normalize=True, cmap="Blues"):
+def plot_confusion_matrix(cm: torch.Tensor, classes_list = [2, 4, 5], class_names=None, cmap="Blues", save_to = None):
     """
     Plots two confusion matrices: one with merged classes (binary) and one with all classes.
 
@@ -223,11 +248,10 @@ def plot_confusion_matrix(cm: torch.Tensor, class_names=None, normalize=True, cm
     """
     
     cm = cm.float().cpu()  # Ensure it's a CPU tensor for plotting
-
+    
     # Normalize
-    if normalize:
-        cm = cm / cm.sum(dim=1, keepdim=True)
-        cm = cm.nan_to_num(0)
+    norm_cm = cm / cm.sum(dim=1, keepdim=True)
+    norm_cm = norm_cm.nan_to_num(0)
 
     # Indices for merged classes
     group_0 = [0, 3]  # Merging classes 0 and 3
@@ -237,9 +261,9 @@ def plot_confusion_matrix(cm: torch.Tensor, class_names=None, normalize=True, cm
     binary_cm[0, 1] = cm[group_0, :][:, group_1].sum()  # (0,3) predicted as (1,2,4)
     binary_cm[1, 0] = cm[group_1, :][:, group_0].sum()  # (1,2,4) predicted as (0,3)
     binary_cm[1, 1] = cm[group_1, :][:, group_1].sum()  # (1,2,4) predicted as (1,2,4)
-    if normalize:
-        binary_cm = binary_cm / binary_cm.sum(dim=1, keepdim=True)
-        binary_cm = binary_cm.nan_to_num(0)
+
+    binary_norm_cm = binary_cm / binary_cm.sum(dim=1, keepdim=True)
+    binary_norm_cm = binary_norm_cm.nan_to_num(0)
     num_classes = cm.shape[0]
     class_labels = class_names if class_names else list(range(num_classes))
     binary_labels = ["(0,3)", "(1,2,4)"]
@@ -267,43 +291,215 @@ def plot_confusion_matrix(cm: torch.Tensor, class_names=None, normalize=True, cm
     join_cm[3, 2] = cm[group_3, :][:, group_2].sum()  # (1,2,4) predicted as (1,2,4)
     join_cm[3, 1] = cm[group_3, :][:, group_1].sum()  # (1,2,4) predicted as (0,3)
     join_cm[1, 3] = cm[group_1, :][:, group_3].sum()  # (1,2,4) predicted as (1,2,4)
-    if normalize:
-        join_cm = join_cm / join_cm.sum(dim=1, keepdim=True)
-        join_cm = join_cm.nan_to_num(0)
+    join_norm_cm = join_cm / join_cm.sum(dim=1, keepdim=True)
+    join_norm_cm = join_norm_cm.nan_to_num(0)
     num_classes = cm.shape[0]
     class_labels = class_names if class_names else list(range(num_classes))
+    class_labels = [str(cl) for cl in class_labels]
     join_labels = ["(0,3)", "(1)", "(2)", "(4)"]
 
 
     # Create subplot
-    fig, axes = plt.subplots(1, 3, figsize=(12, 5))
+    num_plots = 0
+    plot_idxs = []
+    cms = []
+    titles = []
+    labels_ = []
+    recalls = {}
+    if 2 in classes_list:
+        plot_idxs.append(num_plots)
+        num_plots+=1        
+        cms.append(binary_norm_cm)
+        titles.append("Binary Confusion Matrix")
+        labels_.append(binary_labels)
+        recalls['binary'] = calculate_recalls(binary_cm)
+        for i, bl in enumerate(binary_labels):
+            recalls['binary'][bl+'_recall']=binary_norm_cm[i,i]
 
-    # Binary confusion matrix
-    sns.heatmap(binary_cm.numpy(), annot=True, fmt=".2f" if normalize else "d", cmap=cmap, linewidths=0.5, square=True, ax=axes[0])
-    axes[0].set_xticklabels(binary_labels, rotation=45, ha="right", fontsize=10)
-    axes[0].set_yticklabels(binary_labels, rotation=0, fontsize=10)
-    axes[0].set_xlabel("Predicted Label")
-    axes[0].set_ylabel("True Label")
-    axes[0].set_title("Binary Confusion Matrix (Merged Classes)")
+    if 4 in classes_list:
+        plot_idxs.append(num_plots)
+        num_plots+=1        
+        cms.append(join_norm_cm)
+        titles.append("4-Class Confusion Matrix")
+        labels_.append(join_labels)
+        recalls['4class'] = calculate_recalls(join_cm)
+        for i, jl in enumerate(join_labels):
+            recalls['4class'][jl+'_recall']=join_norm_cm[i,i]
+    if 5 in classes_list:
+        plot_idxs.append(num_plots)
+        num_plots+=1        
+        cms.append(norm_cm)
+        titles.append("5-Class Confusion Matrix")
+        labels_.append(class_labels)
+        recalls['5class'] = calculate_recalls(cm)
+        for i, l in enumerate(class_labels):
+            recalls['5class'][l+'_recall']=norm_cm[i,i]
 
-    sns.heatmap(join_cm.numpy(), annot=True, fmt=".2f" if normalize else "d", cmap=cmap, linewidths=0.5, square=True, ax=axes[1])
-    axes[1].set_xticklabels(join_labels, rotation=45, ha="right", fontsize=10)
-    axes[1].set_yticklabels(join_labels, rotation=0, fontsize=10)
-    axes[1].set_xlabel("Predicted Label")
-    axes[1].set_ylabel("True Label")
-    axes[1].set_title("Joined Confusion Matrix (Merged Classes)")
 
-    # Multiclass confusion matrix
-    sns.heatmap(cm.numpy(), annot=True, fmt=".2f" if normalize else "d", cmap=cmap, linewidths=0.5, square=True, ax=axes[2])
-    axes[2].set_xticklabels(class_labels, rotation=45, ha="right", fontsize=10)
-    axes[2].set_yticklabels(class_labels, rotation=0, fontsize=10)
-    axes[2].set_xlabel("Predicted Label")
-    axes[2].set_ylabel("True Label")
-    axes[2].set_title("Confusion Matrix (5 Classes)")
+    fig, axes = plt.subplots(1, num_plots, figsize=(4*num_plots, 4))
+
+    for plot_idx, title, confusion_matrix, labels in zip(plot_idxs, titles, cms, labels_): 
+        try:
+            ax = axes[plot_idx]
+        except:
+            ax = axes
+        sns.heatmap(confusion_matrix.numpy(), annot_kws={"size": 16}, annot=True, fmt=".2f", cmap=cmap, linewidths=1, square=True, ax=ax, cbar=False)
+        ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=14)
+        ax.set_yticklabels(labels, rotation=0, fontsize=14)
+        ax.set_xlabel("Predicted Label", fontsize=18)
+        ax.set_ylabel("True Label", fontsize=18)
+        #ax.set_title(title)
 
     plt.tight_layout()
+    
+    if save_to:
+        print(f'Saving to {save_to}')
+        plt.savefig(save_to, bbox_inches='tight', pad_inches=0)
+    plt.show()
+    return recalls
+
+def plot_confusion_matrix_simple(cm: torch.Tensor, cmap="Blues", save_to = None):
+    """
+    Plots two confusion matrices: one with merged classes (binary) and one with all classes.
+
+    Args:
+        cm (torch.Tensor): The confusion matrix of shape [num_classes, num_classes].
+        class_names (list, optional): List of class names corresponding to indices.
+        normalize (bool): Whether to normalize the confusion matrix to percentages.
+        cmap (str): Color map for visualization.
+    """
+    
+    cm = cm.cpu()  # Ensure it's a CPU tensor for plotting
+    
+    # Normalize
+    norm_cm = cm / cm.sum(dim=1, keepdim=True)
+    norm_cm = norm_cm.nan_to_num(0)
+    labels = list(range(norm_cm.shape[0]))
+
+    num_plots = 1
+    fig, axes = plt.subplots(1, num_plots, figsize=(4*num_plots, 4))
+    ax = axes
+    sns.heatmap(norm_cm.numpy(), annot_kws={"size": 16}, annot=True, fmt=".2f", cmap=cmap, linewidths=1, square=True, ax=ax, cbar=False)
+    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=14)
+    ax.set_yticklabels(labels, rotation=0, fontsize=14)
+    ax.set_xlabel("Predicted Label", fontsize=18)
+    ax.set_ylabel("True Label", fontsize=18)
+    
+    plt.tight_layout()
+    
+    if save_to:
+        print(f'Saving to {save_to}')
+        plt.savefig(save_to, bbox_inches='tight', pad_inches=0)
+    plt.show()
+    return norm_cm
+
+def plot_pca_batch(images: torch.Tensor, images_per_row: int = 4, title: str = "PCA Transformed Images"):
+    """
+    Plots a batch of PCA-transformed images in a grid layout.
+
+    Args:
+        images (torch.Tensor): Tensor of shape [B, 3, W, H], where the 3 channels are PCA components.
+        images_per_row (int): Number of images to display per row.
+        title (str): Title of the plot.
+    """
+    B, C, W, H = images.shape
+    assert C == 3, "Expected 3 channels for PCA visualization"
+
+    # Normalize images for visualization
+    images_min = images.amin(dim=(2, 3), keepdim=True)
+    images_max = images.amax(dim=(2, 3), keepdim=True)
+    images_norm = (images - images_min) / (images_max - images_min)  # Normalize to [0,1]
+
+    # Compute grid size
+    rows = math.ceil(B / images_per_row)
+    cols = min(B, images_per_row)
+
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 3))
+
+    if rows == 1:
+        axes = [axes]  # Ensure iterable for a single row
+    axes = [ax for row in axes for ax in (row if isinstance(row, np.ndarray) else [row])]  # Flatten
+
+    for i in range(B):
+        img = images_norm[i].permute(1, 2, 0).cpu().numpy()  # Convert to (W, H, 3)
+        axes[i].imshow(img)
+        axes[i].axis("off")
+        axes[i].set_title(f"Image {i+1}")
+
+    # Hide unused subplots (if B is not a multiple of images_per_row)
+    for j in range(B, len(axes)):
+        axes[j].axis("off")
+
+    plt.suptitle(title)
     plt.show()
 
+def plot_single_confusion_matrix(cm: torch.Tensor, class_names=None, cmap="Blues", save_to = None):
+    """
+    Plots two confusion matrices: one with merged classes (binary) and one with all classes.
+
+    Args:
+        cm (torch.Tensor): The confusion matrix of shape [num_classes, num_classes].
+        class_names (list, optional): List of class names corresponding to indices.
+        normalize (bool): Whether to normalize the confusion matrix to percentages.
+        cmap (str): Color map for visualization.
+    """
+    
+    cm = cm.float().cpu()  # Ensure it's a CPU tensor for plotting
+    
+    # Normalize
+    norm_cm = cm / cm.sum(dim=1, keepdim=True)
+    norm_cm = norm_cm.nan_to_num(0)
+
+    fig, ax = plt.subplots(figsize=(4, 4))
+
+    sns.heatmap(norm_cm.numpy(), annot_kws={"size": 16}, annot=True, fmt=".2f", cmap=cmap, linewidths=1, square=True, ax=ax, cbar=False)
+    #ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=14)
+    #ax.set_yticklabels(labels, rotation=0, fontsize=14)
+    ax.set_xlabel("Predicted Label", fontsize=18)
+    ax.set_ylabel("True Label", fontsize=18)
+        #ax.set_title(title)
+
+    plt.tight_layout()
+    
+    if save_to:
+        print(f'Saving to {save_to}')
+        plt.savefig(save_to, bbox_inches='tight', pad_inches=0)
+    plt.show()
+    
+def plot_confusion_matrix_simple(cm: torch.Tensor, cmap="Blues", save_to = None):
+    """
+    Plots two confusion matrices: one with merged classes (binary) and one with all classes.
+
+    Args:
+        cm (torch.Tensor): The confusion matrix of shape [num_classes, num_classes].
+        class_names (list, optional): List of class names corresponding to indices.
+        normalize (bool): Whether to normalize the confusion matrix to percentages.
+        cmap (str): Color map for visualization.
+    """
+    
+    cm = cm.cpu()  # Ensure it's a CPU tensor for plotting
+    
+    # Normalize
+    norm_cm = cm / cm.sum(dim=1, keepdim=True)
+    norm_cm = norm_cm.nan_to_num(0)
+    labels = list(range(norm_cm.shape[0]))
+
+    num_plots = 1
+    fig, axes = plt.subplots(1, num_plots, figsize=(4*num_plots, 4))
+    ax = axes
+    sns.heatmap(norm_cm.numpy(), annot_kws={"size": 16}, annot=True, fmt=".2f", cmap=cmap, linewidths=1, square=True, ax=ax, cbar=False)
+    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=14)
+    ax.set_yticklabels(labels, rotation=0, fontsize=14)
+    ax.set_xlabel("Predicted Label", fontsize=18)
+    ax.set_ylabel("True Label", fontsize=18)
+    
+    plt.tight_layout()
+    
+    if save_to:
+        print(f'Saving to {save_to}')
+        plt.savefig(save_to, bbox_inches='tight', pad_inches=0)
+    plt.show()
+    return norm_cm
 
 def plot_pca_batch(images: torch.Tensor, images_per_row: int = 4, title: str = "PCA Transformed Images"):
     """
@@ -346,11 +542,12 @@ def plot_pca_batch(images: torch.Tensor, images_per_row: int = 4, title: str = "
     plt.show()
 
 
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
-def plot_masked_image(mask, label_map, image=None, title="Mask Overlay", ax=None):
+def plot_masked_image(mask, label_map, image=None, title="Mask Overlay", ax=None, figsize = (10,8)):
     """
     Plots a label mask with colored overlays (with transparency) and optionally a 
     background image if provided. Returns the axis used for plotting, so that the 
@@ -385,7 +582,7 @@ def plot_masked_image(mask, label_map, image=None, title="Mask Overlay", ax=None
     """
     # Create an axis if not provided.
     if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 8))
+        fig, ax = plt.subplots(figsize=figsize)
     
     # Display the background image if provided; otherwise, use a white background.
     if image is not None:
@@ -446,7 +643,7 @@ def plot_masks(masks):
     norm = mcolors.BoundaryNorm(bounds, cmap.N)
 
 
-def plot_mask_list(masks, titles = None, save_to = None):
+def plot_mask_list(masks, titles = None, background = None, save_to = None, num_classes = 5):
     
     import matplotlib.pyplot as plt
     import matplotlib.patches as patches
@@ -456,36 +653,82 @@ def plot_mask_list(masks, titles = None, save_to = None):
     
     rows = math.ceil(len(masks)/cols)
     
-    fig, axes = plt.subplots(rows, cols, figsize=(cols * 7, rows * 7))  # Adjust figure size
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 5, rows * 5))  # Adjust figure size
     axes = axes.flatten()  # Flatten for easy iteration
 
-
-    class_colors = {
-        0: "#000000",  # Black (Background)
-        1: "#0000FF",  # Cyan
-        2: "#FF00FF",  # Magenta
-        3: "#FFFF00",  # Yellow
-        4: "#FFFFFF"   # White
-    }
-
-    cmap = mcolors.ListedColormap([class_colors[i] for i in sorted(class_colors.keys())])
-    bounds = sorted(class_colors.keys()) + [max(class_colors.keys()) + 1]
-    norm = mcolors.BoundaryNorm(bounds, cmap.N)
-    
-
-    for i, (ax, mask) in enumerate(zip(axes,masks)):
-        im = ax.imshow(mask, cmap=cmap, extent=[0, mask.shape[1], mask.shape[0], 0], alpha=1)
-        
-        if titles is not None:
-            ax.title(titles[i])
-
-    class_labels = {
+    if num_classes == 5:
+        class_colors = {
+            0: "#000000",  # Black (Background)
+            1: "#0000FF",  # Cyan
+            2: "#FF00FF",  # Magenta
+            3: "#FFFF00",  # Yellow
+            4: "#FFFFFF"   # White
+        }
+        class_labels = {
             0: "Fundo",
             1: "Loteamento vazio",
             2: "Outros equipamentos",
             3: "Vazio intraurbano",
             4: "Área Urbanizada"
         }
+
+    elif num_classes == 4:
+        class_colors = {
+            0: "#000000",  # Black (Background)
+            1: "#0000FF",  # Cyan
+            2: "#FFFF00",  # Yellow
+            3: "#FFFFFF"   # White
+        }
+        class_labels = {
+            0: "Fundo",
+            1: "Loteamento vazio",
+            2: "Outros equipamentos",
+            3: "Área Urbanizada"
+        }
+
+    cmap = mcolors.ListedColormap([class_colors[i] for i in sorted(class_colors.keys())])
+    bounds = sorted(class_colors.keys()) + [max(class_colors.keys()) + 1]
+    norm = mcolors.BoundaryNorm(bounds, cmap.N)
+    
+    if background is not None:
+        pass#background = raster_to_rgb(background)
+    if background is not None:
+        for i in range(3):
+            min_val, max_val = np.nanpercentile(background[i], (2,98))
+            # Avoid division by zero
+            if max_val > min_val:
+                background[i] = np.clip((background[i] - min_val) / (max_val - min_val), 0, 1)
+            else:
+                background[i] = np.zeros_like(background[i])
+            background[i] = (background[i]*255).astype(np.uint8)
+    for i, (ax, mask) in enumerate(zip(axes,masks)):
+
+        if background is not None:
+            bg_mask = mask == 0
+            
+            output = background.copy()#np.stack([mask] * 3, axis=-1)
+            
+            import cv2
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            r, g, b = cv2.split(output)
+            r_clahe = clahe.apply(r)
+            g_clahe = clahe.apply(g)
+            b_clahe = clahe.apply(b)
+            output = cv2.merge([r_clahe, g_clahe, b_clahe])
+
+            for classe in range(1,num_classes):
+                mask_classe = mask == classe
+                color_rgb = tuple(int(class_colors[classe][i:i+2], 16) for i in (1, 3, 5))  # (255, 255, 0)
+                output[mask_classe] = color_rgb
+
+            im = ax.imshow(output)#, cmap=cmap, extent=[0, mask.shape[1], mask.shape[0], 0], alpha=1)
+        else:
+            im = ax.imshow(mask, cmap=cmap, extent=[0, mask.shape[1], mask.shape[0], 0], alpha=1)
+        
+        if titles is not None:
+            ax.set_title(titles[i])
+        ax.axis("off")
+
 
     legend_patches = [
     patches.Patch(facecolor=class_colors[val], edgecolor="black", linewidth=1, label=class_labels[val])
@@ -806,9 +1049,32 @@ def plot_metric(values, names, suffixes, metric_name=None, save_to=None):
         for pos in x[:-1]:  # Avoid last position
             ax.axvline(pos + width * len(keys), color="gray", linestyle="--", alpha=0.5)
 
+        # Add text annotations above each group of bars
+        if 0:
+            for i, prefix in enumerate(prefixes):
+                group_start = i * len(keys)  # Start index of the group
+                group_end = group_start + len(keys)  # End index of the group
+                group_values = [100 * v[j] for v in values_row[group_start:group_end] for j in range(len(keys))]
+                group_mean = np.mean(group_values)  # Mean value of the group
+                group_max = np.max(group_values)  # Max value of the group
+
+                # Position for the text annotations
+                x_pos = x[group_start] + width * (len(keys) - 1) / 2  # Center of the group
+                y_pos_mean = group_mean + 5  # Slightly above the mean
+                y_pos_max = group_max + 10  # Higher up for the max value
+
+                # Add the mean value annotation
+                ax.text(
+                    x_pos, y_pos_mean, f"Mean: {group_mean:.1f}", ha="center", fontsize=8, color="blue"
+                )
+
+                # Add the max value annotation
+                ax.text(
+                    x_pos, y_pos_max, f"Max: {group_max:.1f}", ha="center", fontsize=8, color="red"
+                )
         # Format plot
         ax.set_xticks(x + width * (len(keys) - 1) / 2)  # Center labels
-        model_names = [n.replace("-type", "").replace(".pth", "").replace(suffix, "") if n else "" for n in names_row]
+        model_names = [n.replace("-type", "").replace(".pth", "").replace(suffix, "").replace("-DS-CEW","") if n else "" for n in names_row]
         ax.set_xticklabels(model_names, rotation=45, ha="right")
         ax.set_yticks(np.arange(0, 101, 10))  # Ticks from 0 to 1 with step 0.1
         ax.grid(axis="y", linestyle="--", linewidth=0.7, alpha=0.7)
@@ -900,7 +1166,7 @@ def plot_metric_combination(infos, names, keys, suffixes, metric_names=None, sav
 
         # Format plot
         ax.set_xticks(x + width * (len(keys) - 1) / 2)  # Center labels
-        model_names = [n.replace("-type", "").replace(".pth", "").replace(suffix, "") if n else "" for n in names_row]
+        model_names = [n.replace("-type", "").replace(".pth", "").replace(suffix, "").replace("-DS-CEW", "") if n else "" for n in names_row]
         ax.set_xticklabels(model_names, rotation=45, ha="right")
         ax.set_yticks(np.arange(0, 101, 10))  # Ticks from 0 to 1 with step 0.1
         ax.grid(axis="y", linestyle="--", linewidth=0.7, alpha=0.7)
@@ -918,3 +1184,146 @@ def plot_metric_combination(infos, names, keys, suffixes, metric_names=None, sav
         plt.savefig(save_to, dpi=300, bbox_inches="tight")
 
     plt.show()
+
+
+
+import numpy as np
+import rasterio
+import os
+
+def raster_to_rgb(
+    raster_input,
+    rgb_bands=[3, 2, 1],  # Default RGB bands (4,3,2 in 1-indexed like QGIS)
+    contrast_enhancement="StdDev",
+    min_max_values=None,
+    std_dev_factor=2.0,  # Default standard deviation factor in QGIS
+    cumulative_count_cut=(2.0, 98.0)  # Default percentile values in QGIS
+):
+    """
+    Convert a multi-band raster to RGB image array with contrast enhancement similar to QGIS.
+    
+    Parameters:
+    -----------
+    raster_input : str or numpy.ndarray
+        Either path to raster file or numpy array containing raster data.
+        If numpy array, should have shape (bands, height, width)
+    rgb_bands : list
+        List of 3 band indices to use for R, G, B (0-indexed)
+    contrast_enhancement : str
+        Type of contrast enhancement: 'MinMax', 'StdDev', 'Cumulative', or 'NoEnhancement'
+    min_max_values : list or None
+        List of (min, max) values for each band. If None, calculated from data
+    std_dev_factor : float
+        Factor for standard deviation enhancement (default is 2.0 as in QGIS)
+    cumulative_count_cut : tuple
+        Lower and upper percentile values for cumulative count cut (2-98% by default in QGIS)
+        
+    Returns:
+    --------
+    numpy.ndarray
+        The processed RGB image array with shape (height, width, 3)
+    """
+    # Validate rgb_bands input
+    if len(rgb_bands) != 3:
+        raise ValueError("rgb_bands must contain exactly 3 band indices")
+    
+    # Handle different input types
+    if isinstance(raster_input, str):
+        # Input is a file path
+        if not os.path.exists(raster_input):
+            raise FileNotFoundError(f"Raster file not found: {raster_input}")
+            
+        with rasterio.open(raster_input) as src:
+            # Check band indices are valid
+            if max(rgb_bands) >= src.count:
+                raise ValueError(f"Band index out of range. Available bands: 0-{src.count-1}")
+            
+            # Read selected bands
+            rgb = np.vstack([src.read(b+1) for b in rgb_bands])  # +1 because rasterio is 1-indexed
+            
+            # Handle nodata values if present
+            nodata = src.nodata
+            if nodata is not None:
+                mask = np.logical_or.reduce([band == nodata for band in rgb])
+                for i in range(3):
+                    # Set nodata pixels to NaN for proper handling
+                    rgb[i][mask] = np.nan
+    
+    elif isinstance(raster_input, np.ndarray):
+        # Input is a numpy array
+        if raster_input.ndim < 3:
+            raise ValueError("Numpy array input must be 3D with shape (bands, height, width)")
+        
+        # Check band indices are valid
+        if max(rgb_bands) >= raster_input.shape[0]:
+            raise ValueError(f"Band index out of range. Available bands: 0-{raster_input.shape[0]-1}")
+        
+        # Extract selected bands
+        rgb = np.vstack([raster_input[b:b+1] for b in rgb_bands])
+    
+    else:
+        raise TypeError("raster_input must be either a file path (str) or a numpy array")
+    
+    # Apply contrast enhancement
+    rgb_stretched = np.zeros_like(rgb, dtype=np.float32)
+    
+    if contrast_enhancement == "NoEnhancement":
+        # No enhancement, just normalize to 0-1 if needed
+        for i in range(3):
+            if min_max_values is not None:
+                min_val, max_val = min_max_values[i]
+            else:
+                min_val, max_val = np.nanmin(rgb[i]), np.nanmax(rgb[i])
+            
+            # Avoid division by zero
+            if max_val > min_val:
+                rgb_stretched[i] = np.clip((rgb[i] - min_val) / (max_val - min_val), 0, 1)
+            else:
+                rgb_stretched[i] = np.zeros_like(rgb[i])
+    
+    elif contrast_enhancement == "MinMax":
+        # Linear min-max stretch
+        for i in range(3):
+            if min_max_values is not None:
+                min_val, max_val = min_max_values[i]
+            else:
+                min_val, max_val = np.nanmin(rgb[i]), np.nanmax(rgb[i])
+            
+            # Avoid division by zero
+            if max_val > min_val:
+                rgb_stretched[i] = np.clip((rgb[i] - min_val) / (max_val - min_val), 0, 1)
+            else:
+                rgb_stretched[i] = np.zeros_like(rgb[i])
+    
+    elif contrast_enhancement == "StdDev":
+        # Standard deviation stretch (QGIS default)
+        for i in range(3):
+            mean = np.nanmean(rgb[i])
+            std = np.nanstd(rgb[i])
+            
+            min_val = mean - (std_dev_factor * std)
+            max_val = mean + (std_dev_factor * std)
+            
+            rgb_stretched[i] = np.clip((rgb[i] - min_val) / (max_val - min_val), 0, 1)
+    
+    elif contrast_enhancement == "Cumulative":
+        # Percentile-based stretch (similar to QGIS's cumulative count cut)
+        min_percent, max_percent = cumulative_count_cut
+        for i in range(3):
+            min_val, max_val = np.nanpercentile(rgb[i], (min_percent, max_percent))
+            
+            # Avoid division by zero
+            if max_val > min_val:
+                rgb_stretched[i] = np.clip((rgb[i] - min_val) / (max_val - min_val), 0, 1)
+            else:
+                rgb_stretched[i] = np.zeros_like(rgb[i])
+    
+    # Replace NaNs with zeros in the final output
+    rgb_stretched = np.nan_to_num(rgb_stretched)
+    
+    # Transpose for proper shape (bands last)
+    rgb_display = np.transpose(rgb_stretched, (1, 2, 0))
+    
+    return rgb_display
+# Example usage:
+# rgb_image = raster_to_rgb('path/to/file.tif', rgb_bands=[3, 2, 1])

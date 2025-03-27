@@ -1,0 +1,26 @@
+# Parâmetros para o preprocessamento dos dados
+
+#Modelo: qual o modelo utilizar. Tem que estar salvo em /models(ou /models/finetune), e indicar o nome completo do modelo
+# Ex: UNetSmall-256-4types-DS-CEW-4ch-4tt
+
+model = UNetSmall-256-4types-DS-CEW-4ch-4tt
+
+# apply_cleaning: Se deve-se aplicar a limpeza de predição 
+# Caso positivo, vai se aplicar e salvar em pasta separada CRF e morphing
+apply_cleaning = False
+
+stride = 224
+edge_removal = 8
+batch_size = 16
+num_subtiles = 6
+
+# save_subtiles: indica se quer também salvar cada subtile reconstruído.
+# se verdadeiro, vai gerar 37 imagens, o tle inteiro e outras 36, uma para cada subtile (supong num_subtiles = 6)
+save_subtiles = False
+
+
+tiles:
+#'Brasília': '028022',                      
+'Belo Horizonte': '032027',
+
+

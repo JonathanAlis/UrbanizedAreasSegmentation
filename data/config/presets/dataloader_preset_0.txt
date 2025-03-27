@@ -1,0 +1,29 @@
+# Parâmetros do dataloader, que é usado para treino, validação, testes, inferências, montagem de tiles, etc.
+
+num_channels = 4
+dynamic_sampling = True
+data_augmentation = False
+patch_size = 256
+stride = 256
+num_subtiles = 6
+tile_size = 10560
+batch_size = 16
+
+train_split = 0.6
+val_split = 0.2
+test_split = 0.2 
+
+# class mode. 
+# Opcoes:
+#     type (5 classes, inclui também vazios intraurbanos)
+#     4types (outros, loteamento vazio, outros equipamentos urbanos, área urbanizada)
+#     binary (outros, área urbanizada)
+#     density (outros, loteamento vazio, pouco densa, densa)
+#     equips (outros, outros equipamentos urbanos)
+#     lote (outros, loteamento vazio)
+
+classes_mode = 4types
+
+tiles:
+'Belo Horizonte': '032027',
+

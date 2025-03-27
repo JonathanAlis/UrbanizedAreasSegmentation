@@ -52,15 +52,26 @@ def fill_nans_nearest(arr: np.ndarray, negate_filled: bool = False):
 
 
 
-def preprocess_data(data: np.ndarray, treat_nans: bool | str = False, return_torch: bool = True):
+
+def preprocess_data(data: np.ndarray, treat_nans: bool | str = False, ch_selection = None, return_torch: bool = True):
     # data is int16, where negative values represent invalid 
     # treat_nans: can be 
     # if false, returns data with nans.
     # in true, just abs them
     # if a string, use as interpolation method
     
-    data = (data.astype(np.float32))/10000.0
-
+    if ch_selection is not None:
+        if data.shape[0] > len(ch_selection):
+            data = data[ch_selection]
+        #else:
+        #    raise(ValueError("Channels mismatch"))
+        
+    dtype = data.dtype
+    if dtype == np.int16:
+        data = (data.astype(np.float32))/10000.0
+    if dtype == np.uint8:
+        data = (data.astype(np.float32))/255.0
+    
     if treat_nans == True or treat_nans == 'absolute': # not a string
         data=np.abs(data)
     elif treat_nans == 'negative' or treat_nans == False:
@@ -86,6 +97,7 @@ class MaskReader:
         Classes modes: 
         all: 0 to 9, considers all combinations of types and densities
         type: all 5 types
+        4type: 4 types, excludes vazios intraurbanos
         densities: all 4 densities
         binary: 0 or 1 
         '''
@@ -96,10 +108,16 @@ class MaskReader:
     def transform_to_class_mode(self, m):
         if self.classes_mode.lower() == 'type':
             m = mask_processing.get_type(m)
+        elif self.classes_mode.lower() == '4types':
+            m = mask_processing.get_4types(m)
         elif self.classes_mode.lower() == 'density':
             m = mask_processing.get_density(m)
         elif self.classes_mode.lower() == 'binary':
             m = mask_processing.get_binary(m)
+        elif self.classes_mode.lower() == 'equips':
+            m = mask_processing.get_equips(m)
+        elif self.classes_mode.lower() == 'lote':
+            m = mask_processing.get_loteamento(m)
         else:
             pass# if type_density, or any other, do not change
         return m  
@@ -192,80 +210,138 @@ d4_transforms = {0 : None,
 
 
 class SubtileDataset(Dataset):
-    def __init__(self, files: list|str, patch_size: int = 256, stride: int = 128, 
+    def __init__(self, source: list|str, patch_size: int = 256, stride: int = 128, channels_subset = None,
                  dynamic_sampling: bool = False, data_augmentation: bool = False, 
                  num_subtiles: int = 0, classes_mode: str = 'type', return_imgidx: bool = False, 
-                 ignore_most_nans: bool = True, treat_nans: bool|str = False, debug: bool = False, set:str = ''):
+                 ignore_most_nans: bool = True, treat_nans: bool|str = False, debug: bool = False, set:str = '', working_dir = None):
         
-        #definitions
-        self.working_dir = os.path.abspath('..')
+        ### ----------Definições
+        if working_dir is None:
+            self.working_dir = os.path.abspath('..')
+        else:
+            self.working_dir = working_dir
+        self.debug = debug
+        
         self.transforms = d4_transforms #global
         self.min_step = max(patch_size//8, 16)
         self.daug_threhshold = 0.01
-
-        #mandatory params
+        if channels_subset:
+            self.channels_subset = channels_subset
+        else:
+            self.channels_subset = list(range(12))
+        
+        ### ----------Parametros obrigatórios
         self.patch_size = patch_size
         self.stride = stride
         self.dynamic_sampling = dynamic_sampling
-        self.data_augmentation = data_augmentation   
+        self.data_augmentation = data_augmentation
 
-        # source of files, either a list or yaml file.
-        # if a list, other parameter are mandatory.
-        if isinstance(files, list):
-            self.image_files = files  
+        ### ----------Parametros semi obrigatórios:
+        # obrigatório dependendo dos outros parâmetros
+        # primeiro defino aqui, se necessário, será substituido
+           
+        self.classes_mode = classes_mode
+
+        ### --------- Fonte dos arquivos, 
+        # pode ser um yaml, ou lista de string, ou lista de dicts contendo os patches
+        # se lista, outros parametros sao obrigatórios
+
+        # Lista de strings com os nomes dos arquivos de imagens a carregar
+        if isinstance(source, list) and isinstance(source[0], str):
+            self.image_files = source  
             self.num_subtiles = num_subtiles
             self.classes_mode = classes_mode
-
+            tiles = []
+            for f in source:
+                tile_id = f.split('S2-16D_V2_')[1].split('/')
+                if tile_id not in tiles:
+                    tiles.append(tile_id)
+            if self.debug:
+                print(tiles)
+            self.tiles = tiles
         loaded_patches = False
-        #if is a string with a yaml filename, must provide the set.
-        if isinstance(files, str):
-            self.source = files
+
+        # Se é uma string, é de nome de arquivo yaml
+        if isinstance(source, str) and source.endswith('.yaml'):
+            self.source = source
             self.set = set
-            if not self.source.endswith(".yaml"):
-                self.source += ".yaml"
             
             loaded_data = load_yaml(os.path.join(self.working_dir, 'config', self.source))
+            print(f'Loading from yaml: {self.source}')
             print(loaded_data)
+            #Loading from yaml: train_val_test_split/6-subtiles/mode-4types/num_tiles-12/train_val_test_split.yaml
+
             self.num_subtiles = loaded_data['num_subtiles']
             self.image_files = loaded_data[set]
-            self.classes_mode = self.source.split('stratified_by_')[-1].split('.yaml')[0]
+            self.classes_mode = self.source.split('/')[2].split('mode-')[-1]
+            
+            if self.set == 'train_files':
+                file_list = loaded_data['train_files']
+            if self.set == 'val_files':
+                file_list = loaded_data['val_files']
+            if self.set == 'test_files':
+                file_list = loaded_data['test_files']
+            tiles = []
+            for f in file_list:
+                tile_id = f.split('S2-16D_V2_')[1].split('/')[0]
+                if tile_id not in tiles:
+                    tiles.append(tile_id)
+            self.tiles = tiles
             filename = self.get_filename()
-            print(filename)
+            #/train_val_test_split/6-subtiles/mode-4types/patchsize-256/stride-256/DS-True/DA-False/set-train_files/channels-12/sampling.pkl
+            
             if os.path.exists(filename):
-                print(f"Loading instance from {filename}")
+                print(f"Loading preloaded dataset from {filename}")
                 with open(filename, 'rb') as f:
-                    self.num_subtiles, self.classes_mode, self.patch_size, self.stride, self.dynamic_sampling, self.data_augmentation, self.image_files, self.patches = pickle.load(f)
+                    self.num_subtiles, self.classes_mode, self.patch_size, self.stride, self.dynamic_sampling, self.data_augmentation, self.image_files, self.patches, self.channels_subset= pickle.load(f)
                     loaded_patches = True
             else:
-                print(filename)
                 #print('dataset_6-subtiles_mode-type_patchsize-256_stride-256_dynamicsampling-True_dataaugmentation-True_set-train_files_source-train_val_test_split-6_subtiles-032027-stratified_by_type')
-                print(f"File not found, initializing normally...")
-                
+                print(f"Preloaded dataset file not found, initializing normally...")
+                print(filename)
 
-        self.opened_files = {fp:rasterio.open(fp) for fp in self.image_files}      
+        # Se a fonte for os patches já calculados     
+        patches_from_dict = False
+        #print(source)
+        if isinstance(source, list) and isinstance(source[0], dict):
+            self.patches = source
+            patches_from_dict = True
+            
+            self.opened_files = {dic['file']:rasterio.open(dic['file']) for dic in source}    
+            self.image_files = [dic['file'] for dic in source]  
+            loaded_patches = True
+            
+                #{'file': '/home/jonathan/UrbanizedAreasSegmentation/data/processed/S2-16D_V2_033029/6x6_subtiles/q_12ch/x=8800_y=5280.tif'
+                
+        else:
+            self.opened_files = {fp:rasterio.open(fp) for fp in self.image_files}      
         
+        #print(self.opened_files)
+        ### outras definições
         self.treat_nans = treat_nans  
         self.ignore_most_nans = ignore_most_nans      
         self.return_imgidx = return_imgidx
         self.debug = debug        
         
         
-        if self.classes_mode == 'binary':
-            self.num_classes = 2
-        elif self.classes_mode == 'type':
+        if self.classes_mode == 'type':
             self.num_classes = 5
+        elif self.classes_mode == '4types':
+            self.num_classes = 4
         elif self.classes_mode == 'density':
             self.num_classes = 4
         elif self.classes_mode == 'all':
             self.num_classes = 9
         else:
-            raise('Choose one of the class_mode: binaty, type, density or all.')
+            self.num_classes = 2
         
         with rasterio.open(self.image_files[0]) as im:
             image = im.read()
             self.subtile_size = image.shape
 
-        if not loaded_patches:
+        ### ---------------- Cálculo dos patches
+        if not loaded_patches and not patches_from_dict:
+            
             total_not_augmented = 0
             self.patches=[]
             for f in self.image_files:
@@ -284,59 +360,66 @@ class SubtileDataset(Dataset):
                                 }               
                             self.patches.append(idx_dict)
                             total_not_augmented+=1
-                                
-            if self.dynamic_sampling:  
-                aug1 = self.add_dynamic_sampling()
+            else:
+                total_not_augmented = len(self.patches)
 
-            if self.data_augmentation:
-                aug2 = self.d4_data_augmentation()
+        ### ---------- Amostragem dinâmica
+        if self.dynamic_sampling:  
+            aug1 = self.add_dynamic_sampling()
 
-                counter_pixel, counter_img = self.count_classes()  
-            if self.dynamic_sampling and self.data_augmentation:
-                print(f'After data augmentation:')
-                print(f'Pixels for each class:', counter_pixel)
-                print(f'Num images with each class:', counter_img)
+        ### ---------- Data augmentation
+        if self.data_augmentation:
+            aug2 = self.d4_data_augmentation()
 
-                print(f'Starting from {total_not_augmented} images')
-                print(f'Dinamic Window step added {aug1} images')
-                print(f'Data augmentation added {aug2} images with transform')
-                print(f'Total: {len(self)}')
-        if isinstance(files, str):
+            counter_pixel, counter_img = self.count_classes()  
+        if self.dynamic_sampling and self.data_augmentation:
+            print(f'After data augmentation:')
+            print(f'Pixels for each class:', counter_pixel)
+            print(f'Num images with each class:', counter_img)
+
+            #print(f'Starting from {total_not_augmented} images')
+            print(f'Dinamic Window step added {aug1} images')
+            print(f'Data augmentation added {aug2} images with transform')
+            print(f'Total: {len(self)}')
+
+        if isinstance(source, str):
             self.save_to_file()
 
     def save_to_file(self):
         """Save the instance to a file."""
         filename = self.get_filename()
         with open(filename, 'wb') as f:
-            pickle.dump((self.num_subtiles, self.classes_mode, self.patch_size, self.stride, self.dynamic_sampling, self.data_augmentation, self.image_files, self.patches), f)
-        print(f"Instance saved to {filename}")
+            pickle.dump((self.num_subtiles, self.classes_mode, self.patch_size, self.stride, self.dynamic_sampling, self.data_augmentation, self.image_files, self.patches, self.channels_subset), f)
+        print(f"Dataset instance saved to {filename}")
 
     def get_filename(self):
+        #train_val_test_split/6-subtiles/mode-4types/patchsize-256/stride-256/DS-True/DA-False/set-train_files/channels-12_sampling.pkl
         """Generate a unique filename based on instance parameters."""
-        os.makedirs(os.path.join(self.working_dir, 'config'), exist_ok=True)
-        filename = f'dataset_'
-        filename += f'{self.num_subtiles}-subtiles_'
-        filename += f'mode-{self.classes_mode}_'
-        filename += f'patchsize-{self.patch_size}_'
-        filename += f'stride-{self.stride}_'
-        filename += f'dynamicsampling-{self.dynamic_sampling}_'
-        filename += f'dataaugmentation-{self.data_augmentation}_'
-        filename += f'set-{self.set}'
-        if self.source.endswith(".yaml"):
-            yaml_source = self.source.split('/')[-1][:-5]
-            filename += yaml_source
-        filename += '.pkl'
-#Loading instance from /home/jonathan/UrbanizedAreasSegmentation/config/dataset_6-subtiles_mode_type_patchsize-256_stride-256_dynamicsampling-True_dataaugmentation-True_set-<class 'set'>_source-train_val_test_split-6_subtiles-032027-stratified_by_type.pkl
+        subfolder = f'train_val_test_split/'
+        subfolder += f'{self.num_subtiles}-subtiles/'
+        subfolder += f'mode-{self.classes_mode}/'
+        subfolder += f'num_tiles-{len(self.tiles)}/'
+        subfolder += f'patchsize-{self.patch_size}/'
+        subfolder += f'stride-{self.stride}/'
+        subfolder += f'DS-{self.dynamic_sampling}/'
+        subfolder += f'DA-{self.data_augmentation}/'
+        subfolder += f'channels-{len(self.channels_subset)}/'
+        os.makedirs(os.path.join(self.working_dir, 'config', subfolder), exist_ok=True)        
+        filename = f'{self.set}_sampling.pkl'        
+        #Loading instance from /home/jonathan/UrbanizedAreasSegmentation/config/dataset_6-subtiles_mode_type_patchsize-256_stride-256_dynamicsampling-True_dataaugmentation-True_set-<class 'set'>_source-train_val_test_split-6_subtiles-032027-stratified_by_type.pkl
 
-        return os.path.join(self.working_dir, 'config', filename)
+        return os.path.join(self.working_dir, 'config', subfolder, filename)
 
     def add_dynamic_sampling(self):
         num_included_images = 0
-        print('Doing data augmentation, stage 1...')
+        print('Doing dynamic sampling (DS)')
         counter_pixel, counter_img = self.count_classes()
-        print(f'Before data augmentation stage 1:')
-        print(f'Pixels for each class:', counter_pixel)
-        print(f'Num images with each class:', counter_img)
+        print(f'Before DS:')
+        print(f'Num of pixels for each class:', counter_pixel)
+        print(f'% of pixels for each class:', [100*c/sum(counter_pixel) for c in counter_pixel])
+        print(f'Num of images with each class:', counter_img)
+        #Num of images with each class: tensor([12665,   194,   428,  1819])
+        print(f'% of images with each class:', [100*c/(len(self)) for c in counter_img])
         #minority_classes = sorted(range(len(counter_img)), key=lambda i: counter_img[i], reverse=True)[1:]
         minority_classes = [i for i in sorted(range(len(counter_img)), key=lambda i: counter_img[i], reverse=True)[1:]
                             if counter_img[i] > 0
@@ -383,6 +466,14 @@ class SubtileDataset(Dataset):
         if 0:
             print(aug_indices)
         self.patches.extend(aug_indices)
+        
+        counter_pixel, counter_img = self.count_classes()
+        print(f'After DS:')
+        print(f'Num of pixels for each class:', counter_pixel)
+        print(f'% of pixels for each class:', [100*c/sum(counter_pixel) for c in counter_pixel])
+        print(f'Num of images with each class:', counter_img)
+        #Num of images with each class: tensor([12665,   194,   428,  1819])
+        print(f'% of images with each class:', [100*c/(len(self)) for c in counter_img])
         return num_included_images
 
     def plot_sampled_outlines(self, area_limits=None, save_to = None):
@@ -648,6 +739,7 @@ class SubtileDataset(Dataset):
         subtile_x, subtile_y = get_x_y(file)
         tile = get_tile(file)
         #print('x, y: ', x, y, 'subtiles:', subtile_x, subtile_y)
+
         mask_reader = MaskReader(os.path.join(self.working_dir,f"data/masks/mask_raster_{tile}.tif"),
                                  classes_mode = self.classes_mode
                                 )
@@ -765,15 +857,16 @@ class SubtileDataset(Dataset):
 
     def __getitem__(self, idx):
         x, y, f = self.idx_to_xy(idx, return_filename=True)        
-        
         window = rasterio.windows.Window(x ,y , self.patch_size, self.patch_size)            
-        image = preprocess_data(self.opened_files[f].read(window = window), treat_nans = self.treat_nans, return_torch=True) #np.float32
+        image = preprocess_data(self.opened_files[f].read(window = window), 
+                                treat_nans = self.treat_nans,
+                                ch_selection = self.channels_subset, 
+                                return_torch=True) #np.float32
 
         #mask_params = self.patches[idx]['mask_params']
         #mask_file = mask_params['file']
         mask = self.get_mask(f, x = x, y = y, return_tensor = True)        
         
-
         if self.debug:
             print('LOADING...')
             print(idx)
@@ -782,7 +875,6 @@ class SubtileDataset(Dataset):
 
         # applying tranform
         transf_idx = self.patches[idx]['transform']
-
         if transf_idx > 0:
             image = self.transforms[transf_idx](image)
             mask = self.transforms[transf_idx](mask)
@@ -797,6 +889,8 @@ class SubtileDataset(Dataset):
         for src in self.opened_files.values():
             src.close()
 
+#### Fim da classe SubtileDataset
+#### -----------------------------------------------------
 
 
 def calculate_class_frequencies(masks, stratify_by: str = 'type_density'):
@@ -804,6 +898,8 @@ def calculate_class_frequencies(masks, stratify_by: str = 'type_density'):
     if stratify_by == 'type':
         num_classes = 5
     elif stratify_by == 'density':
+        num_classes = 4
+    elif stratify_by == '4types':
         num_classes = 4
     elif stratify_by == 'binary':
         num_classes = 2
@@ -856,7 +952,7 @@ def load_yaml(file):
     try:
         with open(file, "r") as yaml_file:
             loaded_data = yaml.safe_load(yaml_file)
-            print('Loading: ',yaml_filename)
+            print('Loading: ',file)
 
             return loaded_data
     except yaml.YAMLError as e:
@@ -882,25 +978,24 @@ def get_num_subtiles(filenames):
     return tile_size // gcd_value
 
 
-def yaml_filename(num_subtiles, tiles, stratified_by):
-    filename = 'train_val_test_split'
-    filename += f'-{num_subtiles}_subtiles-'
-    filename += '_'.join(tiles)
-    if stratified_by != '' and stratified_by is not None:
-        filename += f'-stratified_by_{stratified_by}'
-    filename += '.yaml'
+def yaml_filename(num_subtiles, tiles, classes_mode):
+    subfolder = f'train_val_test_split/'
+    subfolder += f'{num_subtiles}-subtiles/'
+    subfolder += f'mode-{classes_mode}/'
+    subfolder += f'num_tiles-{len(tiles)}/'
 
-    working_dir = os.path.abspath('..')
-    filename = os.path.join(working_dir, 'config', filename)
+    filename = 'train_val_test_split.yaml'
 
-    return filename
+    return subfolder+filename
 
 def train_val_test_stratify(tiles, 
                             num_subtiles,
                             train_size = 0.7, 
                             val_size = 0.15, 
                             stratify_by = '',
-                            debug = False):
+                            subfolder = None,
+                            debug = False,
+                            working_dir = None):
     
     # divides into train, validation and test sets, in a stratified way.
     '''
@@ -912,23 +1007,30 @@ def train_val_test_stratify(tiles,
     ### TODO: vizualizar a distribuicao de classes?
     ### Comentar, colocar no relatorio.
 
-    working_dir = os.path.abspath('..')
+    if not working_dir:
+        working_dir = os.path.abspath('..')
 
-    if not isinstance(tiles, list):
+    if isinstance(tiles, str):
         tiles = [tiles]
 
 
     all_files = []
     for tile in tiles:
+        print(tile)
         folder = os.path.join(working_dir,f"data/processed/S2-16D_V2_{tile}/{num_subtiles}x{num_subtiles}_subtiles")
-        
+        if subfolder:
+            folder = os.path.join(folder, subfolder)
+
         files = os.listdir(folder)
         files = [os.path.join(folder, f) for f in files if f.endswith('.tif')]
         all_files+=files
 
         if len(files)!=num_subtiles*num_subtiles:
-            raise(f"Still missing {num_subtiles*num_subtiles - len(files)} image compositions. Run src.data.subtile_composition.create_composition() for the tile {tile} and {num_subtiles} subtiles. There is an example at prepare_images.ipynb")
-        
+            raise ValueError(
+                            f"Still missing {num_subtiles * num_subtiles - len(files)} image compositions. "
+                            f"Run src.data.subtile_composition.create_composition() for the tile {tile} and {num_subtiles} subtiles. "
+                            f"There is an example at prepare_images.ipynb"
+                        )       
     ## Checking if already saved
 
     save_to = yaml_filename(num_subtiles, tiles, stratify_by)
@@ -975,10 +1077,16 @@ def train_val_test_stratify(tiles,
         mask = mask_reader.read_window(subtile_x, subtile_y, patch_size = subtile_size)
         if stratify_by == 'type':
             mask = mask_processing.get_type(mask)
+        elif stratify_by == '4types':
+            mask = mask_processing.get_4types(mask)
         elif stratify_by == 'binary':
             mask = mask_processing.get_binary(mask)
         elif stratify_by == 'density':
-            mask = mask_processing.get_density(mask)
+            mask = mask_processing.get_density(mask)        
+        elif stratify_by == 'equips':
+            mask = mask_processing.get_equips(mask)
+        elif stratify_by == 'lote':
+            mask = mask_processing.get_loteamento(mask)
         #else: nao muda, tem os valores de 0 a 9 ja
         #print(mask.unique())
             

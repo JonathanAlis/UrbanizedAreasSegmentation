@@ -1,0 +1,24 @@
+# shapefile_dir é o caminho do shapefile que contém os polígonos das AU.
+shapefile_path = data/masks/AreasUrbanizadas2019_Brasil/AU_2022_AreasUrbanizadas2019_Brasil.shp
+
+# bdc_grid_path é o caminho do shapefile dos grids do BDC 
+bdc_grid_path = data/grids/BDC_SM_V2/BDC_SM_V2Polygon.shp
+
+#save_dir é a raiz do caminho que as mascaras serão salvas
+save_dir = data/masks
+
+# tiles que serão rasterizados em máscaras
+
+tiles:
+'Boa Vista': '015002',  
+'Manaus': '016009',
+'Campo Grande': '021027',
+'Macapá': '025005',
+'Porto Alegre': '025037',
+'Curitiba': '027032',
+'Brasília': '028022',                      
+'Belo Horizonte': '032027',
+'Rio de Janeiro': '033029',
+'Teresina': '034011',
+'Petrolina': '036016',
+'Salvador': '038019',      
